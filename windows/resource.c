@@ -36,3 +36,10 @@ r_usage->ru_stime.tv_sec = time;
 r_usage->ru_stime.tv_usec = 0;
 return 0;
 }
+
+int
+getrlimit(enum __rlimit_resource resource, struct rlimit *rlimits)
+{
+    _set_errno(ENOSYS);
+    return 0;
+}
