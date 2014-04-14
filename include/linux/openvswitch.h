@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2007-2014 Nicira, Inc.
+ * Copyright (c) 2007-2013 Nicira, Inc.
  *
  * This file is offered under your choice of two licenses: Apache 2.0 or GNU
  * GPL 2.0 or later.  The permission statements for each of these licenses is
@@ -60,15 +60,7 @@ struct ovs_header {
 
 #define OVS_DATAPATH_FAMILY  "ovs_datapath"
 #define OVS_DATAPATH_MCGROUP "ovs_datapath"
-
-/* V2:
- *   - API users are expected to provide OVS_DP_ATTR_USER_FEATURES
- *     when creating the datapath.
- */
-#define OVS_DATAPATH_VERSION 2
-
-/* First OVS datapath version to support features */
-#define OVS_DP_VER_FEATURES 2
+#define OVS_DATAPATH_VERSION 0x1
 
 enum ovs_datapath_cmd {
 	OVS_DP_CMD_UNSPEC,
@@ -91,19 +83,15 @@ enum ovs_datapath_cmd {
  * not be sent.
  * @OVS_DP_ATTR_STATS: Statistics about packets that have passed through the
  * datapath.  Always present in notifications.
- * @OVS_DP_ATTR_MEGAFLOW_STATS: Statistics about mega flow masks usage for the
- * datapath. Always present in notifications.
  *
  * These attributes follow the &struct ovs_header within the Generic Netlink
  * payload for %OVS_DP_* commands.
  */
 enum ovs_datapath_attr {
 	OVS_DP_ATTR_UNSPEC,
-	OVS_DP_ATTR_NAME,		/* name of dp_ifindex netdev */
-	OVS_DP_ATTR_UPCALL_PID,		/* Netlink PID to receive upcalls */
-	OVS_DP_ATTR_STATS,		/* struct ovs_dp_stats */
-	OVS_DP_ATTR_MEGAFLOW_STATS,	/* struct ovs_dp_megaflow_stats */
-	OVS_DP_ATTR_USER_FEATURES,	/* OVS_DP_F_*  */
+	OVS_DP_ATTR_NAME,       /* name of dp_ifindex netdev */
+	OVS_DP_ATTR_UPCALL_PID, /* Netlink PID to receive upcalls */
+	OVS_DP_ATTR_STATS,      /* struct ovs_dp_stats */
 	__OVS_DP_ATTR_MAX
 };
 
@@ -116,14 +104,6 @@ struct ovs_dp_stats {
 	__u64 n_flows;           /* Number of flows present */
 };
 
-struct ovs_dp_megaflow_stats {
-	__u64 n_mask_hit;	 /* Number of masks used for flow lookups. */
-	__u32 n_masks;		 /* Number of masks for the datapath. */
-	__u32 pad0;		 /* Pad for future expension. */
-	__u64 pad1;		 /* Pad for future expension. */
-	__u64 pad2;		 /* Pad for future expension. */
-};
-
 struct ovs_vport_stats {
 	__u64   rx_packets;		/* total packets received       */
 	__u64   tx_packets;		/* total packets transmitted    */
@@ -134,9 +114,6 @@ struct ovs_vport_stats {
 	__u64   rx_dropped;		/* no space in linux buffers    */
 	__u64   tx_dropped;		/* no space available in linux  */
 };
-
-/* Allow last Netlink attribute to be unaligned */
-#define OVS_DP_F_UNALIGNED	(1 << 0)
 
 /* Fixed logical ports. */
 #define OVSP_LOCAL      ((__u32)0)
@@ -305,19 +282,12 @@ enum ovs_key_attr {
 	OVS_KEY_ATTR_ND,        /* struct ovs_key_nd */
 	OVS_KEY_ATTR_SKB_MARK,  /* u32 skb mark */
 	OVS_KEY_ATTR_TUNNEL,	/* Nested set of ovs_tunnel attributes */
-	OVS_KEY_ATTR_SCTP,      /* struct ovs_key_sctp */
-	OVS_KEY_ATTR_TCP_FLAGS,	/* be16 TCP flags. */
-	OVS_KEY_ATTR_DP_HASH,	/* u32 hash value */
-	OVS_KEY_ATTR_RECIRC_ID, /* u32 recirc id */
+
 #ifdef __KERNEL__
-	/* Only used within kernel data path. */
 	OVS_KEY_ATTR_IPV4_TUNNEL,  /* struct ovs_key_ipv4_tunnel */
 #endif
-	/* Experimental */
 
-	OVS_KEY_ATTR_MPLS = 62, /* array of struct ovs_key_mpls.
-				 * The implementation may restrict
-				 * the accepted length of the array. */
+	OVS_KEY_ATTR_MPLS = 62, /* struct ovs_key_mpls */
 	__OVS_KEY_ATTR_MAX
 };
 
@@ -360,7 +330,7 @@ struct ovs_key_ethernet {
 };
 
 struct ovs_key_mpls {
-	__be32 mpls_lse;
+	__be32 mpls_top_lse;
 };
 
 struct ovs_key_ipv4 {
@@ -390,11 +360,6 @@ struct ovs_key_tcp {
 struct ovs_key_udp {
 	__be16 udp_src;
 	__be16 udp_dst;
-};
-
-struct ovs_key_sctp {
-	__be16 sctp_src;
-	__be16 sctp_dst;
 };
 
 struct ovs_key_icmp {
@@ -429,9 +394,7 @@ struct ovs_key_nd {
  * @OVS_FLOW_ATTR_ACTIONS: Nested %OVS_ACTION_ATTR_* attributes specifying
  * the actions to take for packets that match the key.  Always present in
  * notifications.  Required for %OVS_FLOW_CMD_NEW requests, optional for
- * %OVS_FLOW_CMD_SET requests.  An %OVS_FLOW_CMD_SET without
- * %OVS_FLOW_ATTR_ACTIONS will not modify the actions.  To clear the actions,
- * an %OVS_FLOW_ATTR_ACTIONS without any nested attributes must be given.
+ * %OVS_FLOW_CMD_SET requests.
  * @OVS_FLOW_ATTR_STATS: &struct ovs_flow_stats giving statistics for this
  * flow.  Present in notifications if the stats would be nonzero.  Ignored in
  * requests.
@@ -535,30 +498,6 @@ struct ovs_action_push_vlan {
 	__be16 vlan_tci;	/* 802.1Q TCI (VLAN ID and priority). */
 };
 
-/* Data path hash algorithm for computing Datapath hash.
- *
- * The Algorithm type only specifies the fields in a flow
- * will be used as part of the hash. Each datapath is free
- * to use its own hash algorithm. The hash value will be
- * opaque to the user space daemon.
- */
-enum ovs_recirc_hash_alg {
-	OVS_RECIRC_HASH_ALG_NONE,
-	OVS_RECIRC_HASH_ALG_L4,
-};
-/*
- * struct ovs_action_recirc - %OVS_ACTION_ATTR_RECIRC action argument.
- * @recirc_id: The Recirculation label, Zero is invalid.
- * @hash_alg: Algorithm used to compute hash prior to recirculation.
- * @hash_bias: bias used for computing hash.  used to compute hash prior to
- *             recirculation.
- */
-struct ovs_action_recirc {
-	uint32_t  hash_alg;	/* One of ovs_dp_hash_alg. */
-	uint32_t  hash_bias;
-	uint32_t  recirc_id;	/* Recirculation label. */
-};
-
 /**
  * enum ovs_action_attr - Action types.
  *
@@ -574,15 +513,14 @@ struct ovs_action_recirc {
  * single nested %OVS_KEY_ATTR_* attribute specifies a header to modify and its
  * value.
  * @OVS_ACTION_ATTR_PUSH_MPLS: Push a new MPLS label stack entry onto the
- * top of the packets MPLS label stack.  Set the ethertype of the
+ * top of the packets MPLS label stack. Set the ethertype of the
  * encapsulating frame to either %ETH_P_MPLS_UC or %ETH_P_MPLS_MC to
  * indicate the new packet contents.
  * @OVS_ACTION_ATTR_POP_MPLS: Pop an MPLS label stack entry off of the
  * packet's MPLS label stack.  Set the encapsulating frame's ethertype to
- * indicate the new packet contents. This could potentially still be
- * %ETH_P_MPLS if the resulting MPLS label stack is not empty.  If there
+ * indicate the new packet contents This could potentially still be
+ * %ETH_P_MPLS_* if the resulting MPLS label stack is not empty.  If there
  * is no MPLS label stack, as determined by ethertype, no action is taken.
- * @OVS_ACTION_RECIRC: Recirculate within the data path.
  *
  * Only a single header can be set with a single %OVS_ACTION_ATTR_SET.  Not all
  * fields within a header are modifiable, e.g. the IPv4 protocol and fragment
@@ -599,7 +537,6 @@ enum ovs_action_attr {
 	OVS_ACTION_ATTR_SAMPLE,       /* Nested OVS_SAMPLE_ATTR_*. */
 	OVS_ACTION_ATTR_PUSH_MPLS,    /* struct ovs_action_push_mpls. */
 	OVS_ACTION_ATTR_POP_MPLS,     /* __be16 ethertype. */
-	OVS_ACTION_ATTR_RECIRC,	      /* struct ovs_action_recirc. */
 	__OVS_ACTION_ATTR_MAX
 };
 
