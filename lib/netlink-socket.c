@@ -344,9 +344,33 @@ nl_sock_recv__(struct nl_sock *sock, struct ofpbuf *buf, bool wait)
     msg.msg_iov = iov;
     msg.msg_iovlen = 2;
 
+#ifdef _WIN32
+	int bla = GetLastError();
+	do {
+	WSAOVERLAPPED RecvOverlapped;
+	SecureZeroMemory((PVOID)& RecvOverlapped, sizeof (WSAOVERLAPPED));
+	RecvOverlapped.hEvent = WSACreateEvent();
+	if (RecvOverlapped.hEvent == NULL) {
+		LPOVERLAPPED
+			retval = -1;
+	}
+#if __USE_REMOTE_IO_NL_DEVICE
+	_win_read_file((HANDLE)sock->fd, buf->base, buf->allocated, &retval, &RecvOverlapped);
+#else
+	ReadFile((HANDLE)sock->fd, buf->base, buf->allocated, &retval, &RecvOverlapped);
+#endif
+	bla = GetLastError();
+	errno = abs(bla);
+	if (bla != ERROR_IO_PENDING && !retval)
+		retval = -1;
+} while (bla == ERROR_IO_PENDING);
+
+printf("~~~~~~~~~~~~ sunt in netlink_recv retval = %d\n", retval);
+#else
     do {
         retval = recvmsg(sock->fd, &msg, wait ? 0 : MSG_DONTWAIT);
     } while (retval < 0 && errno == EINTR);
+#endif
 
     if (retval < 0) {
         int error = errno;
@@ -464,9 +488,37 @@ nl_sock_transact_multiple__(struct nl_sock *sock,
     memset(&msg, 0, sizeof msg);
     msg.msg_iov = iovs;
     msg.msg_iovlen = n;
-    do {
-        error = sendmsg(sock->fd, &msg, 0) < 0 ? errno : 0;
-    } while (error == EINTR);
+
+#ifdef _WIN32
+	int bla = 0;
+	for (i = 0; i < n; i++) {
+		do {
+
+			WSAOVERLAPPED SendOverlapped;
+			SecureZeroMemory((PVOID)& SendOverlapped, sizeof (WSAOVERLAPPED));
+			SendOverlapped.hEvent = WSACreateEvent();
+			if (SendOverlapped.hEvent == NULL) {
+				error = -1;
+			}
+#if __USE_REMOTE_IO_NL_DEVICE
+			error = _win_write_file((HANDLE)sock->fd, iovs[i].iov_base, iovs[i].iov_len, &SendOverlapped);
+#else
+			error = WriteFile((HANDLE)sock->fd, iovs[i].iov_base, iovs[i].iov_len, NULL, &SendOverlapped);
+#endif
+			bla = GetLastError();
+			int altceva;
+			altceva = 0;
+			if (bla != ERROR_IO_PENDING && !error)
+				error = -1;
+			else
+				error = 0;
+		} while (bla == ERROR_IO_PENDING);
+	}
+#else
+	do {
+		error = sendmsg(sock->fd, &msg, 0) < 0 ? errno : 0;
+	} while (error == EINTR);
+#endif
 
     for (i = 0; i < n; i++) {
         struct nl_transaction *txn = transactions[i];
