@@ -135,7 +135,7 @@
 /* Define to 1 if the compiler support putting variables into sections with
    user-defined names and the linker automatically defines __start_SECNAME and
    __stop_SECNAME symbols that designate the start and end of the section. */
-#define USE_LINKER_SECTIONS 1
+#define USE_LINKER_SECTIONS 0
 
 /* Enable extensions on AIX 3, Interix.  */
 #ifndef _ALL_SOURCE
