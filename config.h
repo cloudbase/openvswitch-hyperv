@@ -272,7 +272,6 @@ typedef unsigned long int sigset_t;
 #pragma comment(lib, "Advapi32.lib")
 #pragma comment (lib, "MsWSock.Lib")
 #pragma comment (lib, "WS2_32.Lib")
-#include <WinSock2.h>
 #endif
 
 
@@ -294,7 +293,7 @@ typedef unsigned long int sigset_t;
 #else
 # define FORMAT_STRING(p) p
 #endif /* _MSC_VER */
-/*
+
 #ifdef _WIN32
 #define __UNICODE__
 #ifndef WCOREDUMP	
@@ -316,4 +315,3 @@ typedef unsigned long int sigset_t;
 #undef WCOREDUMP
 #define WCOREDUMP(status) ((status) & 0x80)
 #endif
-*/
