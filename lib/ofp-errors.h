@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008, 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
+ * Copyright (c) 2008, 2009, 2010, 2011, 2012 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -51,22 +51,8 @@ struct ofpbuf;
  * time and used to determine the mapping between "enum ofperr" constants and
  * error type/code values used in the OpenFlow protocol:
  *
- *   - The first part of each comment specifies the vendor, OpenFlow versions,
- *     type, and sometimes a code for each protocol that supports the error:
- *
- *         # The vendor is OF for standard OpenFlow error codes.  Otherwise it
- *           is one of the *_VENDOR_ID codes defined in openflow-common.h.
- *
- *         # The version can specify a specific OpenFlow version, a version
- *           range delimited by "-", or an open-ended range with "+".
- *
- *         # Standard OpenFlow errors have both a type and a code.  Extension
- *           errors generally have only a type, no code.  There is one
- *           exception: Nicira extension (NX) errors for OpenFlow 1.0 and 1.1
- *           have both a type and a code.  (This means that the version
- *           specification for NX errors may not include version 1.0 or 1.1 (or
- *           both) along with version 1.2 or later, because the requirements
- *           for those versions are different.)
+ *   - The first part of each comment specifies OpenFlow type/code for each
+ *     protocol that supports the error.
  *
  *   - Additional text is a human-readable description of the meaning of each
  *     error, used to explain the error to the user.  Any text enclosed in
@@ -75,7 +61,7 @@ struct ofpbuf;
 enum ofperr {
 /* Expected duplications. */
 
-    /* Expected: 0x0,3,5 in OF1.1 means both OFPBIC_BAD_EXPERIMENTER and
+    /* Expected: 3,5 in OF1.1 means both OFPBIC_BAD_EXPERIMENTER and
      * OFPBIC_BAD_EXP_TYPE. */
 
 /* ## ------------------ ## */
@@ -122,17 +108,17 @@ enum ofperr {
 
     /* NX1.0(1,512), OF1.1+(1,9).  Specified table-id invalid or does not exist.
      * [ A non-standard error (1,512), formerly OFPERR_NXBRC_BAD_TABLE_ID,
-     *   is used for OpenFlow 1.0 as there seems to be no appropriate error
+     *   is used for OpenFlow 1.0 as there seems to be no appropriste error
      *   code defined the specification. ] */
     OFPERR_OFPBRC_BAD_TABLE_ID,
 
     /* OF1.2+(1,10).  Denied because controller is slave. */
     OFPERR_OFPBRC_IS_SLAVE,
 
-    /* NX1.0-1.1(1,514), OF1.2+(1,11).  Invalid port.  [ A non-standard error
-     * (1,514), formerly OFPERR_NXBRC_BAD_IN_PORT is used for OpenFlow 1.0 and
-     * 1.1 as there seems to be no appropriate error code defined the
-     * specifications. ] */
+    /* NX1.0(1,514), NX1.1(1,514), OF1.2+(1,11).  Invalid port.
+     * [ A non-standard error (1,514), formerly
+     *   OFPERR_NXBRC_BAD_IN_PORT is used for OpenFlow 1.0 and 1.1 as there
+     *   seems to be no appropriste error code defined the specifications. ] */
     OFPERR_OFPBRC_BAD_PORT,
 
     /* OF1.2+(1,12).  Invalid packet in packet-out. */
@@ -141,43 +127,41 @@ enum ofperr {
     /* OF1.3+(1,13).  Multipart request overflowed the assigned buffer. */
     OFPERR_OFPBRC_MULTIPART_BUFFER_OVERFLOW,
 
-    /* NX1.0-1.1(1,256), NX1.2+(2).  Invalid NXM flow match. */
+    /* NX1.0+(1,256).  Invalid NXM flow match. */
     OFPERR_NXBRC_NXM_INVALID,
 
-    /* NX1.0-1.1(1,257), NX1.2+(3).  The nxm_type, or nxm_type taken in
-     * combination with nxm_hasmask or nxm_length or both, is invalid or not
-     * implemented. */
+    /* NX1.0+(1,257).  The nxm_type, or nxm_type taken in combination with
+     * nxm_hasmask or nxm_length or both, is invalid or not implemented. */
     OFPERR_NXBRC_NXM_BAD_TYPE,
 
-    /* NX1.0-1.1(1,515), NX1.2+(4).  Must-be-zero field had nonzero value. */
+    /* NX1.0+(1,515).  Must-be-zero field had nonzero value. */
     OFPERR_NXBRC_MUST_BE_ZERO,
 
-    /* NX1.0-1.1(1,516), NX1.2+(5).  The reason in an ofp_port_status message
-     * is not valid. */
+    /* NX1.0+(1,516).  The reason in an ofp_port_status message is not
+     * valid. */
     OFPERR_NXBRC_BAD_REASON,
 
-    /* NX1.0-1.1(1,517), NX1.2+(6).  The 'id' in an NXST_FLOW_MONITOR request
-     * is the same as an existing monitor id (or two monitors in the same
-     * NXST_FLOW_MONITOR request have the same 'id').  */
+    /* NX1.0+(1,517).  The 'id' in an NXST_FLOW_MONITOR request is the same as
+     * an existing monitor id (or two monitors in the same NXST_FLOW_MONITOR
+     * request have the same 'id').  */
     OFPERR_NXBRC_FM_DUPLICATE_ID,
 
-    /* NX1.0-1.1(1,518), NX1.2+(7).  The 'flags' in an NXST_FLOW_MONITOR
-     * request either does not specify at least one of the NXFMF_ADD,
-     * NXFMF_DELETE, or NXFMF_MODIFY flags, or specifies a flag bit that is not
-     * defined. */
+    /* NX1.0+(1,518).  The 'flags' in an NXST_FLOW_MONITOR request either does
+     * not specify at least one of the NXFMF_ADD, NXFMF_DELETE, or NXFMF_MODIFY
+     * flags, or specifies a flag bit that is not defined. */
     OFPERR_NXBRC_FM_BAD_FLAGS,
 
-    /* NX1.0-1.1(1,519), NX1.2+(8).  The 'id' in an NXT_FLOW_MONITOR_CANCEL
-     * request is not the id of any existing monitor. */
+    /* NX1.0+(1,519).  The 'id' in an NXT_FLOW_MONITOR_CANCEL request is not
+     * the id of any existing monitor. */
     OFPERR_NXBRC_FM_BAD_ID,
 
-    /* NX1.0-1.1(1,520), NX1.2+(9).  The 'event' in an NXST_FLOW_MONITOR reply
-     * does not specify one of the NXFME_ABBREV, NXFME_ADD, NXFME_DELETE, or
+    /* NX1.0+(1,520).  The 'event' in an NXST_FLOW_MONITOR reply does not
+     * specify one of the NXFME_ABBREV, NXFME_ADD, NXFME_DELETE, or
      * NXFME_MODIFY. */
     OFPERR_NXBRC_FM_BAD_EVENT,
 
-    /* NX1.0-1.1(1,521), NX1.2+(10).  The error that occurred cannot be
-     * represented in this OpenFlow version. */
+    /* NX1.0+(1,521).  The error that occurred cannot be represented in this
+     * OpenFlow version. */
     OFPERR_NXBRC_UNENCODABLE_ERROR,
 
 /* ## ---------------- ## */
@@ -214,8 +198,7 @@ enum ofperr {
     /* OF1.1+(2,9).  Invalid group id in forward action. */
     OFPERR_OFPBAC_BAD_OUT_GROUP,
 
-    /* NX1.0(1,522), OF1.1+(2,10).  Action can't apply for this match or a
-     * prerequisite for use of this field is unmet. */
+    /* OF1.1+(2,10).  Action can't apply for this match. */
     OFPERR_OFPBAC_MATCH_INCONSISTENT,
 
     /* OF1.1+(2,11).  Action order is unsupported for the action list in an
@@ -225,20 +208,16 @@ enum ofperr {
     /* OF1.1+(2,12).  Actions uses an unsupported tag/encap. */
     OFPERR_OFPBAC_BAD_TAG,
 
-    /* NX1.0-1.1(1,523), OF1.2+(2,13).  Action uses unknown or unsupported OXM
-     * or NXM field. */
-    OFPERR_OFPBAC_BAD_SET_TYPE,
+    /* OF1.2+(2,13).  Unsupported type in SET_FIELD action. */
+    OFPERR_OFPBAC_SET_TYPE,
 
-    /* NX1.0-1.1(1,524), OF1.2+(2,14).  Action references past the end of an
-     * OXM or NXM field, or uses a length of zero. */
-    OFPERR_OFPBAC_BAD_SET_LEN,
+    /* OF1.2+(2,14).  Length problem in SET_FIELD action. */
+    OFPERR_OFPBAC_SET_LEN,
 
-    /* NX1.0-1.1(1,525), OF1.2+(2,15).  Action sets a field to an invalid or
-     * unsupported value, or modifies a read-only field. */
-    OFPERR_OFPBAC_BAD_SET_ARGUMENT,
+    /* OF1.2+(2,15).  Bad argument in SET_FIELD action. */
+    OFPERR_OFPBAC_ARGUMENT,
 
-    /* NX1.0-1.1(2,256), NX1.2+(11).  Must-be-zero action argument had nonzero
-     * value. */
+    /* NX1.0+(2,256).  Must-be-zero action argument had nonzero value. */
     OFPERR_NXBAC_MUST_BE_ZERO,
 
 /* ## --------------------- ## */
@@ -272,9 +251,6 @@ enum ofperr {
     /* OF1.2+(3,8).  Permissions error. */
     OFPERR_OFPBIC_EPERM,
 
-    /* ONF1.1+(2600).  Duplicate instruction. */
-    OFPERR_ONFBIC_DUP_INSTRUCTION,
-
 /* ## --------------- ## */
 /* ## OFPET_BAD_MATCH ## */
 /* ## --------------- ## */
@@ -306,14 +282,15 @@ enum ofperr {
      * field. */
     OFPERR_OFPBMC_BAD_VALUE,
 
-    /* NX1.0-1.1(1,259), OF1.2+(4,8).  Unsupported mask specified in the match,
-     * field is not dl-address or nw-address. */
+    /* NX1.0(1,259), NX1.1(1,259), OF1.2+(4,8).  Unsupported mask specified in
+     * the match, field is not dl-address or nw-address. */
     OFPERR_OFPBMC_BAD_MASK,
 
-    /* NX1.0-1.1(1,260), OF1.2+(4,9).  A prerequisite was not met. */
+    /* NX1.0(1,260), NX1.1(1,260), OF1.2+(4,9).  A prerequisite was not met. */
     OFPERR_OFPBMC_BAD_PREREQ,
 
-    /* NX1.0-1.1(1,261), OF1.2+(4,10).  A field type was duplicated. */
+    /* NX1.0(1,261), NX1.1(1,261), OF1.2+(4,10).  A field type was
+     * duplicated. */
     OFPERR_OFPBMC_DUP_FIELD,
 
     /* OF1.2+(4,11).  Permissions error. */
@@ -349,20 +326,19 @@ enum ofperr {
     /* OF1.0(3,4), OF1.1+(5,6).  Unsupported or unknown command. */
     OFPERR_OFPFMFC_BAD_COMMAND,
 
-    /* NX1.0(3,258), NX1.1(5,258), OF1.2+(5,7).  Unsupported or unknown
-     * flags. */
+    /* OF1.2+(5,7).  Unsupported or unknown flags. */
     OFPERR_OFPFMFC_BAD_FLAGS,
 
     /* OF1.0(3,5).  Unsupported action list - cannot process in the order
      * specified. */
     OFPERR_OFPFMFC_UNSUPPORTED,
 
-    /* NX1.0-1.1(5,256), NX1.2+(12).  Generic hardware error. */
+    /* NX1.0(3,256), NX1.1(5,256).  Generic hardware error. */
     OFPERR_NXFMFC_HARDWARE,
 
-    /* NX1.0-1.1(5,257), NX1.2+(13).  A nonexistent table ID was specified in
-     * the "command" field of struct ofp_flow_mod, when the
-     * nxt_flow_mod_table_id extension is enabled. */
+    /* NX1.0(3,257), NX1.1(5,257).  A nonexistent table ID was specified in the
+     * "command" field of struct ofp_flow_mod, when the nxt_flow_mod_table_id
+     * extension is enabled. */
     OFPERR_NXFMFC_BAD_TABLE_ID,
 
 /* ## ---------------------- ## */
@@ -412,13 +388,13 @@ enum ofperr {
     OFPERR_OFPGMFC_BAD_COMMAND,
 
     /* OF1.2+(6,12).  Error in bucket. */
-    OFPERR_OFPGMFC_BAD_BUCKET,
+    OFPERR_OFPGMFC_OFPGMFC_BAD_BUCKET,
 
     /* OF1.2+(6,13).  Error in watch port/group. */
-    OFPERR_OFPGMFC_BAD_WATCH,
+    OFPERR_OFPGMFC_OFPGMFC_BAD_WATCH,
 
     /* OF1.2+(6,14).  Permissions error. */
-    OFPERR_OFPGMFC_EPERM,
+    OFPERR_OFPGMFC_OFPGMFC_EPERM,
 
 /* ## --------------------- ## */
 /* ## OFPET_PORT_MOD_FAILED ## */
@@ -489,7 +465,7 @@ enum ofperr {
     /* OF1.2+(11,1).  Controller role change unsupported. */
     OFPERR_OFPRRFC_UNSUP,
 
-    /* NX1.0-1.1(1,513), OF1.2+(11,2).  Invalid role. */
+    /* NX1.0(1,513), NX1.1(1,513), OF1.2+(11,2).  Invalid role. */
     OFPERR_OFPRRFC_BAD_ROLE,
 
 /* ## ---------------------- ## */
@@ -566,6 +542,7 @@ const char *ofperr_domain_get_name(enum ofp_version);
 
 bool ofperr_is_valid(enum ofperr);
 
+enum ofperr ofperr_decode(enum ofp_version, uint16_t type, uint16_t code);
 enum ofperr ofperr_from_name(const char *);
 
 enum ofperr ofperr_decode_msg(const struct ofp_header *,
@@ -573,7 +550,6 @@ enum ofperr ofperr_decode_msg(const struct ofp_header *,
 struct ofpbuf *ofperr_encode_reply(enum ofperr, const struct ofp_header *);
 struct ofpbuf *ofperr_encode_hello(enum ofperr, enum ofp_version ofp_version,
                                    const char *);
-int ofperr_get_vendor(enum ofperr, enum ofp_version);
 int ofperr_get_type(enum ofperr, enum ofp_version);
 int ofperr_get_code(enum ofperr, enum ofp_version);
 

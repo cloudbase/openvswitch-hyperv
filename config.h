@@ -294,6 +294,7 @@ typedef unsigned long int sigset_t;
 #else
 # define FORMAT_STRING(p) p
 #endif /* _MSC_VER */
+/*
 #ifdef _WIN32
 #define __UNICODE__
 #ifndef WCOREDUMP	
@@ -315,3 +316,4 @@ typedef unsigned long int sigset_t;
 #undef WCOREDUMP
 #define WCOREDUMP(status) ((status) & 0x80)
 #endif
+*/

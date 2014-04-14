@@ -32,6 +32,12 @@ struct triplet {
     int type, code;
 };
 
+#ifdef _WIN32
+struct pair {
+	int type, code;
+};
+#endif
+
 #include "ofp-errors.inc"
 
 /* Returns an ofperr_domain that corresponds to the OpenFlow version number

@@ -947,8 +947,8 @@ netdev_linux_rxq_recv_sock(int fd, struct ofpbuf *buffer)
             || cmsg->cmsg_len < CMSG_LEN(sizeof(struct tpacket_auxdata))) {
             continue;
         }
-
-        aux = ALIGNED_CAST(struct tpacket_auxdata *, CMSG_DATA(cmsg));
+		//TODO Investigate further
+        //aux = ALIGNED_CAST(struct tpacket_auxdata *, CMSG_DATA(cmsg));
         if (auxdata_has_vlan_tci(aux)) {
             if (retval < ETH_HEADER_LEN) {
                 return EINVAL;

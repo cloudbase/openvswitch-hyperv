@@ -474,7 +474,7 @@ ofpact_from_nxast(const union ofp_action *a, enum ofputil_action_code code,
     case OFPUTIL_NXAST_PUSH_MPLS:
         error = push_mpls_from_openflow(a->push_mpls.ethertype, out);
         break;
-
+#ifndef _WIN32
     case OFPUTIL_NXAST_SET_MPLS_LABEL:
         ofpact_put_SET_MPLS_LABEL(out)->label = a->mpls_label.label;
         break;
@@ -482,6 +482,7 @@ ofpact_from_nxast(const union ofp_action *a, enum ofputil_action_code code,
     case OFPUTIL_NXAST_SET_MPLS_TC:
         ofpact_put_SET_MPLS_TC(out)->tc = a->mpls_tc.tc;
         break;
+#endif
 
     case OFPUTIL_NXAST_SET_MPLS_TTL:
         ofpact_put_SET_MPLS_TTL(out)->ttl = a->mpls_ttl.ttl;
@@ -937,6 +938,7 @@ set_field_to_openflow11(const struct ofpact_set_field *sf,
                sf->value.mac, ETH_ADDR_LEN);
         break;
 
+#ifndef _WIN32
     case MFF_MPLS_LABEL:
         ofputil_put_OFPAT11_SET_MPLS_LABEL(openflow)->mpls_label =
             sf->value.be32;
@@ -945,6 +947,7 @@ set_field_to_openflow11(const struct ofpact_set_field *sf,
     case MFF_MPLS_TC:
         ofputil_put_OFPAT11_SET_MPLS_TC(openflow)->mpls_tc = sf->value.u8;
         break;
+#endif
 
     case MFF_IPV4_SRC:
         ofputil_put_OFPAT11_SET_NW_SRC(openflow)->nw_addr = sf->value.be32;
@@ -962,6 +965,7 @@ set_field_to_openflow11(const struct ofpact_set_field *sf,
         ofputil_put_OFPAT11_SET_NW_TOS(openflow)->nw_tos = sf->value.u8 << 2;
         break;
 
+#ifndef _WIN32
     case MFF_IP_ECN:
         ofputil_put_OFPAT11_SET_NW_ECN(openflow)->nw_ecn = sf->value.u8;
         break;
@@ -969,6 +973,7 @@ set_field_to_openflow11(const struct ofpact_set_field *sf,
     case MFF_IP_TTL:
         ofputil_put_OFPAT11_SET_NW_TTL(openflow)->nw_ttl = sf->value.u8;
         break;
+#endif
 
     case MFF_TCP_SRC:
     case MFF_UDP_SRC:
@@ -1131,7 +1136,9 @@ ofpact_from_openflow11(const union ofp_action *a, enum ofp_version version,
         case OFPUTIL_OFPAT11_SET_NW_SRC:
         case OFPUTIL_OFPAT11_SET_NW_DST:
         case OFPUTIL_OFPAT11_SET_NW_TOS:
+#ifndef _WIN32
         case OFPUTIL_OFPAT11_SET_NW_ECN:
+#endif
         case OFPUTIL_OFPAT11_SET_TP_SRC:
         case OFPUTIL_OFPAT11_SET_TP_DST:
             VLOG_WARN_RL(&rl, "Deprecated action %s received over %s",
@@ -1216,6 +1223,7 @@ ofpact_from_openflow11(const union ofp_action *a, enum ofp_version version,
         ofpact_put_SET_IP_DSCP(out)->dscp = a->nw_tos.nw_tos;
         break;
 
+#ifndef _WIN32
     case OFPUTIL_OFPAT11_SET_NW_ECN:
         if (a->nw_ecn.nw_ecn & ~IP_ECN_MASK) {
             return OFPERR_OFPBAC_BAD_ARGUMENT;
@@ -1226,6 +1234,7 @@ ofpact_from_openflow11(const union ofp_action *a, enum ofp_version version,
     case OFPUTIL_OFPAT11_SET_NW_TTL:
         ofpact_put_SET_IP_TTL(out)->ttl = a->nw_ttl.nw_ttl;
         break;
+#endif
 
     case OFPUTIL_OFPAT11_SET_TP_SRC:
         ofpact_put_SET_L4_SRC_PORT(out)->port = ntohs(a->tp_port.tp_port);
@@ -1238,6 +1247,7 @@ ofpact_from_openflow11(const union ofp_action *a, enum ofp_version version,
     case OFPUTIL_OFPAT12_SET_FIELD:
         return set_field_from_openflow(&a->set_field, out);
 
+#ifndef _WIN32
     case OFPUTIL_OFPAT11_SET_MPLS_LABEL:
         ofpact_put_SET_MPLS_LABEL(out)->label = a->ofp11_mpls_label.mpls_label;
         break;
@@ -1245,6 +1255,7 @@ ofpact_from_openflow11(const union ofp_action *a, enum ofp_version version,
     case OFPUTIL_OFPAT11_SET_MPLS_TC:
         ofpact_put_SET_MPLS_TC(out)->tc = a->ofp11_mpls_tc.mpls_tc;
         break;
+#endif
 
     case OFPUTIL_OFPAT11_SET_MPLS_TTL:
         ofpact_put_SET_MPLS_TTL(out)->ttl = a->ofp11_mpls_ttl.mpls_ttl;
@@ -1265,9 +1276,11 @@ ofpact_from_openflow11(const union ofp_action *a, enum ofp_version version,
         ofpact_put_POP_MPLS(out)->ethertype = a->ofp11_pop_mpls.ethertype;
         break;
 
+#ifndef _WIN32
     case OFPUTIL_OFPAT11_GROUP:
         ofpact_put_GROUP(out)->group_id = ntohl(a->group.group_id);
         break;
+#endif
 
 #define NXAST_ACTION(ENUM, STRUCT, EXTENSIBLE, NAME) case OFPUTIL_##ENUM:
 #include "ofp-util.def"
@@ -2400,6 +2413,7 @@ ofpact_to_nxast(const struct ofpact *a, struct ofpbuf *out)
         ofpact_dec_ttl_to_nxast(ofpact_get_DEC_TTL(a), out);
         break;
 
+#ifndef _WIN32
     case OFPACT_SET_MPLS_LABEL:
         ofputil_put_NXAST_SET_MPLS_LABEL(out)->label
             = ofpact_get_SET_MPLS_LABEL(a)->label;
@@ -2409,6 +2423,7 @@ ofpact_to_nxast(const struct ofpact *a, struct ofpbuf *out)
         ofputil_put_NXAST_SET_MPLS_TC(out)->tc
             = ofpact_get_SET_MPLS_TC(a)->tc;
         break;
+#endif
 
     case OFPACT_SET_MPLS_TTL:
         ofputil_put_NXAST_SET_MPLS_TTL(out)->ttl
@@ -2734,6 +2749,7 @@ ofpact_to_openflow11(const struct ofpact *a, struct ofpbuf *out)
             = ofpact_get_SET_IP_DSCP(a)->dscp;
         break;
 
+#ifndef _WIN32
     case OFPACT_SET_IP_ECN:
         ofputil_put_OFPAT11_SET_NW_ECN(out)->nw_ecn
             = ofpact_get_SET_IP_ECN(a)->ecn;
@@ -2743,6 +2759,7 @@ ofpact_to_openflow11(const struct ofpact *a, struct ofpbuf *out)
         ofputil_put_OFPAT11_SET_NW_TTL(out)->nw_ttl
             = ofpact_get_SET_IP_TTL(a)->ttl;
         break;
+#endif
 
     case OFPACT_SET_L4_SRC_PORT:
         ofputil_put_OFPAT11_SET_TP_SRC(out)->tp_port
@@ -2758,6 +2775,7 @@ ofpact_to_openflow11(const struct ofpact *a, struct ofpbuf *out)
         ofpact_dec_ttl_to_openflow11(ofpact_get_DEC_TTL(a), out);
         break;
 
+#ifndef _WIN32
     case OFPACT_SET_MPLS_LABEL:
         ofputil_put_OFPAT11_SET_MPLS_LABEL(out)->mpls_label
             = ofpact_get_SET_MPLS_LABEL(a)->label;
@@ -2767,6 +2785,7 @@ ofpact_to_openflow11(const struct ofpact *a, struct ofpbuf *out)
         ofputil_put_OFPAT11_SET_MPLS_TC(out)->mpls_tc
             = ofpact_get_SET_MPLS_TC(a)->tc;
         break;
+#endif
 
     case OFPACT_SET_MPLS_TTL:
         ofputil_put_OFPAT11_SET_MPLS_TTL(out)->mpls_ttl
@@ -2799,8 +2818,10 @@ ofpact_to_openflow11(const struct ofpact *a, struct ofpbuf *out)
         OVS_NOT_REACHED();
 
     case OFPACT_GROUP:
+#ifndef _WIN32
         ofputil_put_OFPAT11_GROUP(out)->group_id =
             htonl(ofpact_get_GROUP(a)->group_id);
+#endif
         break;
 
     case OFPACT_SET_FIELD:
