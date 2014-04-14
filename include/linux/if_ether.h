@@ -28,6 +28,8 @@
 #else  /* no <linux/if_ether.h> */
 #define ETH_ALEN        6               /* Octets in one ethernet addr   */
 #endif
+#else
+#define ETH_ALEN        6               /* Octets in one ethernet addr   */
 #endif
 
 #endif /* <linux/if_ether.h> */
