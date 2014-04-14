@@ -1,0 +1,9 @@
+STRESS_OPTION(
+    stream_flaky_recv, "simulate failure of fd stream recvs",
+    100, 0, -1, 0)
+STRESS_OPTION(
+    stream_flaky_send, "simulate failure of fd stream sends",
+    100, 0, -1, 0)
+STRESS_OPTION(
+    netlink_overflow, "simulate netlink socket receive buffer overflow",
+    5, 1, -1, 100)
