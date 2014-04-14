@@ -103,7 +103,7 @@
 /* #undef HAVE_VALGRIND_VALGRIND_H */
 
 /* System uses the linux datapath module. */
-#define LINUX_DATAPATH 1
+#define LINUX_DATAPATH 0
 
 /* Define to 1 if your C compiler doesn't accept -c and -o together. */
 /* #undef NO_MINUS_C_MINUS_O */
