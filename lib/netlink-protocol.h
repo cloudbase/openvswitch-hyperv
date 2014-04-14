@@ -34,8 +34,10 @@
 #include "util.h"
 
 #ifdef HAVE_NETLINK
+#ifndef _WIN32
 #include <linux/netlink.h>
 #include <linux/genetlink.h>
+#endif
 
 #else
 #define NETLINK_GENERIC         16
