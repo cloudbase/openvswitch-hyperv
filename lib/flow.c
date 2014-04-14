@@ -157,15 +157,27 @@ parse_ipv6(struct ofpbuf *packet, struct flow *flow)
         return EINVAL;
     }
 
-    nexthdr = nh->ip6_nxt;
+#ifndef _WIN32
+	nexthdr = nh->ip6_nxt;
+#else
+	nh->ip6_ctlun.ip6_un1.ip6_un1_nxt;
+#endif
 
     memcpy(&flow->ipv6_src, &nh->ip6_src, sizeof flow->ipv6_src);
     memcpy(&flow->ipv6_dst, &nh->ip6_dst, sizeof flow->ipv6_dst);
 
-    tc_flow = get_16aligned_be32(&nh->ip6_flow);
+#ifndef _WIN32
+	tc_flow = get_16aligned_be32(&nh->ip6_flow);
+#else
+	tc_flow = get_16aligned_be32(&nh->ip6_ctlun.ip6_un1.ip6_un1_flow);
+#endif
     flow->nw_tos = ntohl(tc_flow) >> 20;
     flow->ipv6_label = tc_flow & htonl(IPV6_LABEL_MASK);
-    flow->nw_ttl = nh->ip6_hlim;
+#ifndef _WIN32
+	flow->nw_ttl = nh->ip6_hlim;
+#else
+	flow->nw_ttl = nh->ip6_ctlun.ip6_un1.ip6_un1_hlim;
+#endif
     flow->nw_proto = IPPROTO_NONE;
 
     while (1) {
@@ -1367,10 +1379,19 @@ flow_compose(struct ofpbuf *b, const struct flow *flow)
         struct ovs_16aligned_ip6_hdr *nh;
 
         nh = ofpbuf_put_zeros(b, sizeof *nh);
+#ifdef _WIN32
+		put_16aligned_be32(&nh->ip6_ctlun.ip6_un1.ip6_un1_flow, htonl(6 << 28) |
+#else
         put_16aligned_be32(&nh->ip6_flow, htonl(6 << 28) |
+#endif
                            htonl(flow->nw_tos << 20) | flow->ipv6_label);
+#ifdef _WIN32
+		nh->ip6_ctlun.ip6_un1.ip6_un1_hlim = flow->nw_ttl;
+		nh->ip6_ctlun.ip6_un1.ip6_un1_nxt = flow->nw_proto;
+#else
         nh->ip6_hlim = flow->nw_ttl;
-        nh->ip6_nxt = flow->nw_proto;
+		nh->ip6_nxt = flow->nw_proto;
+#endif
 
         memcpy(&nh->ip6_src, &flow->ipv6_src, sizeof(nh->ip6_src));
         memcpy(&nh->ip6_dst, &flow->ipv6_dst, sizeof(nh->ip6_dst));
@@ -1379,7 +1400,11 @@ flow_compose(struct ofpbuf *b, const struct flow *flow)
 
         l4_len = flow_compose_l4(b, flow);
 
+#ifdef _WIN32
+		nh->ip6_ctlun.ip6_un1.ip6_un1_plen = htons(l4_len);
+#else
         nh->ip6_plen = htons(l4_len);
+#endif
     } else if (flow->dl_type == htons(ETH_TYPE_ARP) ||
                flow->dl_type == htons(ETH_TYPE_RARP)) {
         struct arp_eth_header *arp;

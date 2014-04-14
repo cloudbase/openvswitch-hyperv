@@ -1,5 +1,6 @@
 #include <winsock2.h>
-
+#ifndef RTNETLINK_H
+#define RTNETLINK_H 1
 enum
 {
     IFLA_UNSPEC,
@@ -237,3 +238,4 @@ enum
     __TCA_MAX
 };
 
+#endif

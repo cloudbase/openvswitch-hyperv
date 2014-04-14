@@ -9,6 +9,7 @@
 #include <process.h>
 #include <dirent.h>
 #include <direct.h>
+#include <linux/rtnetlink.h>
 
 #define srandom srand
 #define random rand
