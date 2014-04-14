@@ -1,3 +1,5 @@
+#ifndef IF_ETHER_H
+#define IF_ETHER_H 1
 #include <config.h>
 #include <winsock2.h>
 #include <WS2tcpip.h>
@@ -241,3 +243,4 @@ struct ethhdr {
 #define SUPPORTED_20000baseMLD2_Full    (1 << 21)
 #define SUPPORTED_20000baseKR2_Full     (1 << 22)
 
+#endif

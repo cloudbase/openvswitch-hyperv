@@ -1,10 +1,10 @@
 #ifndef WINDEFS_H
 #define WINDEFS_H 1
 
-#include <unistd.h>
+//#include <unistd.h>
 #include <signal.h>
-#include <Windows.h>
-#include <tlhelp32.h>
+//#include <Windows.h>
+//#include <tlhelp32.h>
 
 #pragma comment(lib, "dbghelp.lib")
 #pragma comment(lib, "Advapi32.lib")

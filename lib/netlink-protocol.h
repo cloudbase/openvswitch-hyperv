@@ -33,12 +33,13 @@
 #include <sys/socket.h>
 #include "util.h"
 
-#ifdef HAVE_NETLINK
-#ifndef _WIN32
-#include <linux/netlink.h>
-#include <linux/genetlink.h>
+#ifdef _WIN32
+#undef HAVE_NETLINK
 #endif
 
+#ifdef HAVE_NETLINK
+#include <linux/netlink.h>
+#include <linux/genetlink.h>
 #else
 #define NETLINK_GENERIC         16
 

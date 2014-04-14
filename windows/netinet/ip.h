@@ -1,3 +1,6 @@
+#ifndef IP_H
+#define IP_H 1
+
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <mstcpip.h>
@@ -52,3 +55,5 @@
 #define IPOPT_OLEN   1  /* option length */
 #define IPOPT_OFFSET 2  /* offset within option */
 #define IPOPT_MINOFF 4  /* min value of above */
+
+#endif

@@ -1,5 +1,5 @@
 #ifndef ICMP6_H
-#define ICMP6_H
+#define ICMP6_H 1
 
 #include <WinSock2.h>
 #include <windows.h>

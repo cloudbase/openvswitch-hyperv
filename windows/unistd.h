@@ -11,6 +11,7 @@
 #include <dirent.h>
 #include <direct.h>
 #include <linux/rtnetlink.h>
+#include <config.h>
 
 #define srandom srand
 #define random rand
@@ -184,4 +185,5 @@ extern int sigdelset(sigset_t *set, int signo);
 extern int sigaddset(sigset_t *set, int signo);
 extern int sigaction(int signum, const struct sigaction *act, struct sigaction *oldact);
 extern int sigprocmask(int signum, const struct sigaction *act, struct sigaction *oldact);
+
 #endif 

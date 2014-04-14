@@ -1,9 +1,10 @@
 #ifndef UIO_H
 #define UIO_H 1
-#include <windows.h>
+
 #include <inttypes.h>
 #include <unistd.h>
 #include <WS2tcpip.h>
+#include <windefs.h>
 
 
 

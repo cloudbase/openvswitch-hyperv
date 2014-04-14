@@ -1,6 +1,8 @@
-#include <winsock2.h>
 #ifndef RTNETLINK_H
 #define RTNETLINK_H 1
+
+#include <winsock2.h>
+
 enum
 {
     IFLA_UNSPEC,
