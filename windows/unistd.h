@@ -18,7 +18,7 @@
 #define F_OK    0   
 
 #define access _access
-#define ftruncate _chsize
+//#define ftruncate _chsize
 
 #define ssize_t int
 
