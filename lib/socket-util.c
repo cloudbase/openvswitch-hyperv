@@ -75,18 +75,31 @@ static int getsockopt_int(int fd, int level, int option, const char *optname,
 int
 set_nonblocking(int fd)
 {
-    int flags = fcntl(fd, F_GETFL, 0);
-    if (flags != -1) {
-        if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) != -1) {
-            return 0;
-        } else {
-            VLOG_ERR("fcntl(F_SETFL) failed: %s", strerror(errno));
-            return errno;
-        }
-    } else {
-        VLOG_ERR("fcntl(F_GETFL) failed: %s", strerror(errno));
-        return errno;
-    }
+#ifndef _WIN32
+	int flags = fcntl(fd, F_GETFL, 0);
+	if (flags != -1) {
+		if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) != -1) {
+			return 0;
+		}
+		else {
+			VLOG_ERR("fcntl(F_SETFL) failed: %s", strerror(errno));
+			return errno;
+		}
+	}
+	else {
+		VLOG_ERR("fcntl(F_GETFL) failed: %s", strerror(errno));
+		return errno;
+	}
+#else
+	int flags = 0;
+	u_long iMode = 1;
+	int iResult;
+	iResult = ioctlsocket(fd, FIONBIO, &iMode);
+	int bla = WSAGetLastError();
+	if (bla == WSAENOTSOCK)
+		return 0;
+	return iResult;
+#endif
 }
 
 void
@@ -1148,9 +1161,24 @@ send_iovec_and_fds(int sock,
         msg.msg_controllen = CMSG_SPACE(n_fds * sizeof *fds);
         msg.msg_flags = 0;
 
-        return sendmsg(sock, &msg, 0);
-    } else {
-        return writev(sock, iovs, n_iovs);
+#ifdef _WIN32
+		int val;
+		DWORD no_bytes;
+		val = WSASend(sock, (LPWSABUF)msg.msg_iov, msg.msg_iovlen, &no_bytes, 0, NULL, NULL);
+		return no_bytes;
+#else
+		return sendmsg(sock, &msg, 0);
+#endif
+	}
+	else {
+#ifdef _WIN32
+		int val;
+		DWORD no_bytes;
+		val = WSASend(sock, (LPWSABUF)iovs, n_iovs, &no_bytes, 0, NULL, NULL);
+		return no_bytes;
+#else
+		return writev(sock, iovs, n_iovs);
+#endif
     }
 }
 
