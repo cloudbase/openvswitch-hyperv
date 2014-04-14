@@ -677,24 +677,31 @@ abs_file_name(const char *dir, const char *file_name)
 char *
 xreadlink(const char *filename)
 {
-    size_t size;
+#ifndef _WIN32
+	size_t size;
 
-    for (size = 64; ; size *= 2) {
-        char *buf = xmalloc(size);
-        ssize_t retval = readlink(filename, buf, size);
-        int error = errno;
+	for (size = 64;; size *= 2) {
+		char *buf = xmalloc(size);
+		ssize_t retval = readlink(filename, buf, size);
+		int error = errno;
 
-        if (retval >= 0 && retval < size) {
-            buf[retval] = '\0';
-            return buf;
-        }
+		if (retval >= 0 && retval < size) {
+			buf[retval] = '\0';
+			return buf;
+		}
 
-        free(buf);
-        if (retval < 0) {
-            errno = error;
-            return NULL;
-        }
-    }
+		free(buf);
+		if (retval < 0) {
+			errno = error;
+			return NULL;
+		}
+	}
+#else
+	if (filename)
+		return filename;
+	else
+		return NULL;
+#endif
 }
 
 /* Returns a version of 'filename' with symlinks in the final component
