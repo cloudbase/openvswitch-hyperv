@@ -1,30 +1,21 @@
-# Copyright (C) 2009, 2010, 2011, 2012, 2013, 2014 Nicira, Inc.
+# Copyright (C) 2009, 2010, 2011, 2012 Nicira, Inc.
 #
 # Copying and distribution of this file, with or without modification,
 # are permitted in any medium without royalty provided the copyright
 # notice and this notice are preserved.  This file is offered as-is,
 # without warranty of any kind.
 
-lib_LTLIBRARIES += lib/libopenvswitch.la
+noinst_LIBRARIES += lib/libopenvswitch.a
 
-lib_libopenvswitch_la_LIBADD = $(SSL_LIBS)
-
-if WIN32
-lib_libopenvswitch_la_LIBADD += ${PTHREAD_LIBS}
-endif
-
-lib_libopenvswitch_la_LDFLAGS = -release $(VERSION)
-
-lib_libopenvswitch_la_SOURCES = \
+lib_libopenvswitch_a_SOURCES = \
 	lib/aes128.c \
 	lib/aes128.h \
-	lib/async-append.h \
 	lib/backtrace.c \
 	lib/backtrace.h \
-	lib/bfd.c \
-	lib/bfd.h \
 	lib/bitmap.c \
 	lib/bitmap.h \
+	lib/bond.c \
+	lib/bond.h \
 	lib/bundle.c \
 	lib/bundle.h \
 	lib/byte-order.h \
@@ -37,14 +28,11 @@ lib_libopenvswitch_la_SOURCES = \
 	lib/command-line.c \
 	lib/command-line.h \
 	lib/compiler.h \
-	lib/connectivity.c \
-	lib/connectivity.h \
 	lib/coverage.c \
 	lib/coverage.h \
-	lib/crc32c.c \
-	lib/crc32c.h \
 	lib/csum.c \
 	lib/csum.h \
+	lib/daemon.c \
 	lib/daemon.h \
 	lib/dhcp.h \
 	lib/dummy.c \
@@ -52,7 +40,6 @@ lib_libopenvswitch_la_SOURCES = \
 	lib/dhparams.h \
 	lib/dirs.h \
 	lib/dpif-netdev.c \
-	lib/dpif-netdev.h \
 	lib/dpif-provider.h \
 	lib/dpif.c \
 	lib/dpif.h \
@@ -62,18 +49,12 @@ lib_libopenvswitch_la_SOURCES = \
 	lib/dynamic-string.h \
 	lib/entropy.c \
 	lib/entropy.h \
-	lib/fat-rwlock.c \
-	lib/fat-rwlock.h \
 	lib/fatal-signal.c \
 	lib/fatal-signal.h \
 	lib/flow.c \
 	lib/flow.h \
-	lib/guarded-list.c \
-	lib/guarded-list.h \
 	lib/hash.c \
 	lib/hash.h \
-	lib/hindex.c \
-	lib/hindex.h \
 	lib/hmap.c \
 	lib/hmap.h \
 	lib/hmapx.c \
@@ -86,7 +67,8 @@ lib_libopenvswitch_la_SOURCES = \
 	lib/jsonrpc.h \
 	lib/lacp.c \
 	lib/lacp.h \
-	lib/latch.h \
+	lib/leak-checker.c \
+	lib/leak-checker.h \
 	lib/learn.c \
 	lib/learn.h \
 	lib/learning-switch.c \
@@ -116,8 +98,6 @@ lib_libopenvswitch_la_SOURCES = \
 	lib/netlink.h \
 	lib/nx-match.c \
 	lib/nx-match.h \
-	lib/odp-execute.c \
-	lib/odp-execute.h \
 	lib/odp-util.c \
 	lib/odp-util.h \
 	lib/ofp-actions.c \
@@ -137,19 +117,6 @@ lib_libopenvswitch_la_SOURCES = \
 	lib/ofp-version-opt.c \
 	lib/ofpbuf.c \
 	lib/ofpbuf.h \
-	lib/ovs-atomic-c11.h \
-	lib/ovs-atomic-clang.h \
-	lib/ovs-atomic-flag-gcc4.7+.h \
-	lib/ovs-atomic-gcc4+.h \
-	lib/ovs-atomic-gcc4.7+.h \
-	lib/ovs-atomic-locked.c \
-	lib/ovs-atomic-locked.h \
-	lib/ovs-atomic-pthreads.h \
-	lib/ovs-atomic.h \
-	lib/ovs-rcu.c \
-	lib/ovs-rcu.h \
-	lib/ovs-thread.c \
-	lib/ovs-thread.h \
 	lib/ovsdb-data.c \
 	lib/ovsdb-data.h \
 	lib/ovsdb-error.c \
@@ -176,14 +143,14 @@ lib_libopenvswitch_la_SOURCES = \
 	lib/reconnect.c \
 	lib/reconnect.h \
 	lib/sat-math.h \
-	lib/seq.c \
-	lib/seq.h \
 	lib/sha1.c \
 	lib/sha1.h \
 	lib/shash.c \
 	lib/shash.h \
 	lib/simap.c \
 	lib/simap.h \
+	lib/signals.c \
+	lib/signals.h \
 	lib/smap.c \
 	lib/smap.h \
 	lib/socket-util.c \
@@ -194,14 +161,18 @@ lib_libopenvswitch_la_SOURCES = \
 	lib/sset.h \
 	lib/stp.c \
 	lib/stp.h \
+	lib/stream-fd.c \
 	lib/stream-fd.h \
 	lib/stream-provider.h \
 	lib/stream-ssl.h \
 	lib/stream-tcp.c \
+	lib/stream-unix.c \
 	lib/stream.c \
 	lib/stream.h \
-	lib/stdio.c \
+	lib/stress.c \
+	lib/stress.h \
 	lib/string.c \
+	lib/string.h \
 	lib/svec.c \
 	lib/svec.h \
 	lib/table.c \
@@ -237,56 +208,31 @@ lib_libopenvswitch_la_SOURCES = \
 	lib/vlog.h \
 	lib/vswitch-idl.c \
 	lib/vswitch-idl.h \
-	lib/vtep-idl.c \
-	lib/vtep-idl.h
+	lib/worker.c \
+	lib/worker.h
 
-if WIN32
-lib_libopenvswitch_la_SOURCES += \
-	lib/daemon-windows.c \
-	lib/getopt_long.c \
-	lib/getrusage-windows.c \
-	lib/latch-windows.c \
-	lib/route-table-stub.c \
-	lib/strsep.c \
-	lib/stream-fd-windows.c
-else
-lib_libopenvswitch_la_SOURCES += \
-	lib/daemon.c \
-	lib/latch-unix.c \
-	lib/signals.c \
-	lib/signals.h \
-	lib/stream-fd-unix.c \
-	lib/stream-unix.c
-endif
-
-EXTRA_DIST += \
-	lib/stdio.h.in \
-	lib/string.h.in
-
-nodist_lib_libopenvswitch_la_SOURCES = \
+nodist_lib_libopenvswitch_a_SOURCES = \
 	lib/dirs.c
-CLEANFILES += $(nodist_lib_libopenvswitch_la_SOURCES)
+CLEANFILES += $(nodist_lib_libopenvswitch_a_SOURCES)
 
-lib_LTLIBRARIES += lib/libsflow.la
-lib_libsflow_la_LDFLAGS = -release $(VERSION)
-lib_libsflow_la_SOURCES = \
+noinst_LIBRARIES += lib/libsflow.a
+lib_libsflow_a_SOURCES = \
 	lib/sflow_api.h \
 	lib/sflow.h \
 	lib/sflow_agent.c \
 	lib/sflow_sampler.c \
 	lib/sflow_poller.c \
 	lib/sflow_receiver.c
-lib_libsflow_la_CPPFLAGS = $(AM_CPPFLAGS)
-lib_libsflow_la_CFLAGS = $(AM_CFLAGS)
+lib_libsflow_a_CFLAGS = $(AM_CFLAGS)
 if HAVE_WNO_UNUSED
-lib_libsflow_la_CFLAGS += -Wno-unused
+lib_libsflow_a_CFLAGS += -Wno-unused
 endif
 if HAVE_WNO_UNUSED_PARAMETER
-lib_libsflow_la_CFLAGS += -Wno-unused-parameter
+lib_libsflow_a_CFLAGS += -Wno-unused-parameter
 endif
 
-if LINUX
-lib_libopenvswitch_la_SOURCES += \
+if LINUX_DATAPATH
+lib_libopenvswitch_a_SOURCES += \
 	lib/dpif-linux.c \
 	lib/dpif-linux.h \
 	lib/netdev-linux.c \
@@ -302,25 +248,13 @@ lib_libopenvswitch_la_SOURCES += \
 	lib/route-table.h
 endif
 
-if DPDK_NETDEV
-lib_libopenvswitch_la_SOURCES += \
-       lib/netdev-dpdk.c \
-       lib/netdev-dpdk.h
-endif
-
-if HAVE_POSIX_AIO
-lib_libopenvswitch_la_SOURCES += lib/async-append-aio.c
-else
-lib_libopenvswitch_la_SOURCES += lib/async-append-null.c
-endif
-
 if ESX
-lib_libopenvswitch_la_SOURCES += \
+lib_libopenvswitch_a_SOURCES += \
         lib/route-table-stub.c
 endif
 
 if HAVE_IF_DL
-lib_libopenvswitch_la_SOURCES += \
+lib_libopenvswitch_a_SOURCES += \
 	lib/netdev-bsd.c \
 	lib/rtbsd.c \
 	lib/rtbsd.h \
@@ -328,8 +262,8 @@ lib_libopenvswitch_la_SOURCES += \
 endif
 
 if HAVE_OPENSSL
-lib_libopenvswitch_la_SOURCES += lib/stream-ssl.c
-nodist_lib_libopenvswitch_la_SOURCES += lib/dhparams.c
+lib_libopenvswitch_a_SOURCES += lib/stream-ssl.c
+nodist_lib_libopenvswitch_a_SOURCES += lib/dhparams.c
 lib/dhparams.c: lib/dh1024.pem lib/dh2048.pem lib/dh4096.pem
 	(echo '#include "lib/dhparams.h"' &&				\
 	 openssl dhparam -C -in $(srcdir)/lib/dh1024.pem -noout &&	\
@@ -338,7 +272,7 @@ lib/dhparams.c: lib/dh1024.pem lib/dh2048.pem lib/dh4096.pem
 	| sed 's/\(get_dh[0-9]*\)()/\1(void)/' > lib/dhparams.c.tmp
 	mv lib/dhparams.c.tmp lib/dhparams.c
 else
-lib_libopenvswitch_la_SOURCES += lib/stream-nossl.c
+lib_libopenvswitch_a_SOURCES += lib/stream-nossl.c
 endif
 
 EXTRA_DIST += \
@@ -353,16 +287,16 @@ MAN_FRAGMENTS += \
 	lib/coverage-unixctl.man \
 	lib/daemon.man \
 	lib/daemon-syn.man \
+	lib/leak-checker.man \
 	lib/memory-unixctl.man \
 	lib/ofp-version.man \
 	lib/ovs.tmac \
-	lib/service.man \
-	lib/service-syn.man \
 	lib/ssl-bootstrap.man \
 	lib/ssl-bootstrap-syn.man \
 	lib/ssl-peer-ca-cert.man \
 	lib/ssl.man \
 	lib/ssl-syn.man \
+	lib/stress-unixctl.man \
 	lib/table.man \
 	lib/unixctl.man \
 	lib/unixctl-syn.man \
@@ -376,10 +310,7 @@ MAN_FRAGMENTS += \
 OVSIDL_BUILT += \
 	$(srcdir)/lib/vswitch-idl.c \
 	$(srcdir)/lib/vswitch-idl.h \
-	$(srcdir)/lib/vswitch-idl.ovsidl \
-	$(srcdir)/lib/vtep-idl.c \
-	$(srcdir)/lib/vtep-idl.h \
-	$(srcdir)/lib/vtep-idl.ovsidl
+	$(srcdir)/lib/vswitch-idl.ovsidl
 
 EXTRA_DIST += $(srcdir)/lib/vswitch-idl.ann
 VSWITCH_IDL_FILES = \
@@ -387,14 +318,6 @@ VSWITCH_IDL_FILES = \
 	$(srcdir)/lib/vswitch-idl.ann
 $(srcdir)/lib/vswitch-idl.ovsidl: $(VSWITCH_IDL_FILES)
 	$(OVSDB_IDLC) annotate $(VSWITCH_IDL_FILES) > $@.tmp
-	mv $@.tmp $@
-
-EXTRA_DIST += $(srcdir)/lib/vtep-idl.ann
-VTEP_IDL_FILES = \
-	$(srcdir)/vtep/vtep.ovsschema \
-	$(srcdir)/lib/vtep-idl.ann
-$(srcdir)/lib/vtep-idl.ovsidl: $(VTEP_IDL_FILES)
-	$(OVSDB_IDLC) annotate $(VTEP_IDL_FILES) > $@.tmp
 	mv $@.tmp $@
 
 lib/dirs.c: lib/dirs.c.in Makefile
@@ -410,12 +333,9 @@ lib/dirs.c: lib/dirs.c.in Makefile
 	mv lib/dirs.c.tmp lib/dirs.c
 
 $(srcdir)/lib/ofp-errors.inc: \
-	lib/ofp-errors.h include/openflow/openflow-common.h \
-	$(srcdir)/build-aux/extract-ofp-errors
+	lib/ofp-errors.h $(srcdir)/build-aux/extract-ofp-errors
 	$(run_python) $(srcdir)/build-aux/extract-ofp-errors \
-		$(srcdir)/lib/ofp-errors.h \
-		$(srcdir)/include/openflow/openflow-common.h > $@.tmp
-	mv $@.tmp $@
+		$(srcdir)/lib/ofp-errors.h > $@.tmp && mv $@.tmp $@
 $(srcdir)/lib/ofp-errors.c: $(srcdir)/lib/ofp-errors.inc
 EXTRA_DIST += build-aux/extract-ofp-errors lib/ofp-errors.inc
 
@@ -433,3 +353,30 @@ lib-install-data-local:
 	$(MKDIR_P) $(DESTDIR)$(LOGDIR)
 	$(MKDIR_P) $(DESTDIR)$(DBDIR)
 
+if !USE_LINKER_SECTIONS
+# All distributed sources, with names adjust properly for referencing
+# from $(builddir).
+all_sources = \
+	`for file in $(DIST_SOURCES); do \
+		if test -f $$file; then \
+			echo $$file; \
+		else \
+			echo $(VPATH)/$$file; \
+		fi; \
+	 done`
+
+lib/coverage.$(OBJEXT): lib/coverage.def
+lib/coverage.def: $(DIST_SOURCES)
+	sed -n 's|^COVERAGE_DEFINE(\([_a-zA-Z0-9]\{1,\}\)).*$$|COVERAGE_COUNTER(\1)|p' $(all_sources) | LC_ALL=C sort -u > $@
+CLEANFILES += lib/coverage.def
+
+lib/stress.$(OBJEXT): lib/stress.def
+lib/stress.def: $(DIST_SOURCES)
+	sed -n '/^STRESS_OPTION(/,/);$$/{s/);$$/)/;p}' $(all_sources) > $@
+CLEANFILES += lib/stress.def
+
+lib/vlog.$(OBJEXT): lib/vlog-modules.def
+lib/vlog-modules.def: $(DIST_SOURCES)
+	sed -n 's|^VLOG_DEFINE_\(THIS_\)\{0,1\}MODULE(\([_a-zA-Z0-9]\{1,\}\)).*$$|VLOG_MODULE(\2)|p' $(all_sources) | LC_ALL=C sort -u > $@
+CLEANFILES += lib/vlog-modules.def
+endif

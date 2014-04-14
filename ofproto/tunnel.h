@@ -20,26 +20,26 @@
 #include <stdint.h>
 #include "flow.h"
 
+/* skb mark used for IPsec tunnel packets */
+#define IPSEC_MARK 1
+
 /* Tunnel port emulation layer.
  *
  * These functions emulate tunnel virtual ports based on the outer
  * header information from the kernel. */
 
-struct ofport_dpif;
-struct netdev;
+struct ofport;
+struct tnl_port;
 
-bool tnl_port_reconfigure(const struct ofport_dpif *, const struct netdev *,
-                          odp_port_t);
+bool tnl_port_reconfigure(const struct ofport *, uint32_t odp_port,
+                          struct tnl_port **);
 
-void tnl_port_add(const struct ofport_dpif *, const struct netdev *,
-                  odp_port_t odp_port);
-void tnl_port_del(const struct ofport_dpif *);
+struct tnl_port *tnl_port_add(const struct ofport *, uint32_t odp_port);
+void tnl_port_del(struct tnl_port *);
 
-const struct ofport_dpif *tnl_port_receive(const struct flow *);
-bool tnl_xlate_init(const struct flow *base_flow, struct flow *flow,
-                    struct flow_wildcards *);
-odp_port_t tnl_port_send(const struct ofport_dpif *, struct flow *,
-                         struct flow_wildcards *wc);
+const struct ofport *tnl_port_receive(struct flow *);
+uint32_t tnl_port_send(const struct tnl_port *, struct flow *,
+                       struct flow_wildcards *wc);
 
 /* Returns true if 'flow' should be submitted to tnl_port_receive(). */
 static inline bool

@@ -19,28 +19,19 @@
 #include <stdlib.h>
 #include <string.h>
 #include "dynamic-string.h"
-#include "netdev-dpdk.h"
 #include "util.h"
-
-static void
-ofpbuf_init__(struct ofpbuf *b, size_t allocated, enum ofpbuf_source source)
-{
-    b->allocated = allocated;
-    b->source = source;
-    b->frame = NULL;
-    b->l2_5_ofs = b->l3_ofs = b->l4_ofs = UINT16_MAX;
-    list_poison(&b->list_node);
-}
 
 static void
 ofpbuf_use__(struct ofpbuf *b, void *base, size_t allocated,
              enum ofpbuf_source source)
 {
-    ofpbuf_set_base(b, base);
-    ofpbuf_set_data(b, base);
-    ofpbuf_set_size(b, 0);
-
-    ofpbuf_init__(b, allocated, source);
+    b->base = b->data = base;
+    b->allocated = allocated;
+    b->source = source;
+    b->size = 0;
+    b->l2 = b->l2_5 = b->l3 = b->l4 = b->l7 = NULL;
+    list_poison(&b->list_node);
+    b->private_p = NULL;
 }
 
 /* Initializes 'b' as an empty ofpbuf that contains the 'allocated' bytes of
@@ -76,7 +67,7 @@ ofpbuf_use_stack(struct ofpbuf *b, void *base, size_t allocated)
 /* Initializes 'b' as an empty ofpbuf that contains the 'allocated' bytes of
  * memory starting at 'base'.  'base' should point to a buffer on the stack.
  * (Nothing actually relies on 'base' being allocated on the stack.  It could
- * be static or malloc()'d memory.  But stack space is the most common use
+ * be static or malloc()'d memory.  But stack space is the most common usen
  * case.)
  *
  * 'base' should be appropriately aligned.  Using an array of uint32_t or
@@ -104,19 +95,7 @@ void
 ofpbuf_use_const(struct ofpbuf *b, const void *data, size_t size)
 {
     ofpbuf_use__(b, CONST_CAST(void *, data), size, OFPBUF_STACK);
-    ofpbuf_set_size(b, size);
-}
-
-/* Initializes 'b' as an empty ofpbuf that contains the 'allocated' bytes of
- * memory starting at 'base'.  DPDK allocated ofpbuf and *data is allocated
- * from one continous memory region, so in memory data start right after
- * ofpbuf.  Therefore there is special method to free this type of
- * buffer.  ofpbuf base, data and size are initialized by dpdk rcv() so no
- * need to initialize those fields. */
-void
-ofpbuf_init_dpdk(struct ofpbuf *b, size_t allocated)
-{
-    ofpbuf_init__(b, allocated, OFPBUF_DPDK);
+    b->size = size;
 }
 
 /* Initializes 'b' as an empty ofpbuf with an initial capacity of 'size'
@@ -131,12 +110,18 @@ ofpbuf_init(struct ofpbuf *b, size_t size)
 void
 ofpbuf_uninit(struct ofpbuf *b)
 {
-    if (b) {
-        if (b->source == OFPBUF_MALLOC) {
-            free(ofpbuf_base(b));
-        }
-        ovs_assert(b->source != OFPBUF_DPDK);
+    if (b && b->source == OFPBUF_MALLOC) {
+        free(b->base);
     }
+}
+
+/* Returns a pointer that may be passed to free() to accomplish the same thing
+ * as ofpbuf_uninit(b).  The return value is a null pointer if ofpbuf_uninit()
+ * would not free any memory. */
+void *
+ofpbuf_get_uninit_pointer(struct ofpbuf *b)
+{
+    return b && b->source == OFPBUF_MALLOC ? b->base : NULL;
 }
 
 /* Frees memory that 'b' points to and allocates a new ofpbuf */
@@ -168,7 +153,7 @@ ofpbuf_new_with_headroom(size_t size, size_t headroom)
 }
 
 /* Creates and returns a new ofpbuf that initially contains a copy of the
- * 'ofpbuf_size(buffer)' bytes of data starting at 'buffer->data' with no headroom or
+ * 'buffer->size' bytes of data starting at 'buffer->data' with no headroom or
  * tailroom. */
 struct ofpbuf *
 ofpbuf_clone(const struct ofpbuf *buffer)
@@ -182,19 +167,27 @@ struct ofpbuf *
 ofpbuf_clone_with_headroom(const struct ofpbuf *buffer, size_t headroom)
 {
     struct ofpbuf *new_buffer;
+    uintptr_t data_delta;
 
-    new_buffer = ofpbuf_clone_data_with_headroom(ofpbuf_data(buffer),
-                                                 ofpbuf_size(buffer),
+    new_buffer = ofpbuf_clone_data_with_headroom(buffer->data, buffer->size,
                                                  headroom);
-    if (buffer->frame) {
-        uintptr_t data_delta
-            = (char *)ofpbuf_data(new_buffer) - (char *)ofpbuf_data(buffer);
+    data_delta = (char *) new_buffer->data - (char *) buffer->data;
 
-        new_buffer->frame = (char *) buffer->frame + data_delta;
+    if (buffer->l2) {
+        new_buffer->l2 = (char *) buffer->l2 + data_delta;
     }
-    new_buffer->l2_5_ofs = buffer->l2_5_ofs;
-    new_buffer->l3_ofs = buffer->l3_ofs;
-    new_buffer->l4_ofs = buffer->l4_ofs;
+    if (buffer->l2_5) {
+        new_buffer->l2_5 = (char *) buffer->l2_5 + data_delta;
+    }
+    if (buffer->l3) {
+        new_buffer->l3 = (char *) buffer->l3 + data_delta;
+    }
+    if (buffer->l4) {
+        new_buffer->l4 = (char *) buffer->l4 + data_delta;
+    }
+    if (buffer->l7) {
+        new_buffer->l7 = (char *) buffer->l7 + data_delta;
+    }
 
     return new_buffer;
 }
@@ -218,11 +211,39 @@ ofpbuf_clone_data_with_headroom(const void *data, size_t size, size_t headroom)
     return b;
 }
 
+/* Frees memory that 'b' points to, as well as 'b' itself. */
+void
+ofpbuf_delete(struct ofpbuf *b)
+{
+    if (b) {
+        ofpbuf_uninit(b);
+        free(b);
+    }
+}
+
+/* Returns the number of bytes of headroom in 'b', that is, the number of bytes
+ * of unused space in ofpbuf 'b' before the data that is in use.  (Most
+ * commonly, the data in a ofpbuf is at its beginning, and thus the ofpbuf's
+ * headroom is 0.) */
+size_t
+ofpbuf_headroom(const struct ofpbuf *b)
+{
+    return (char*)b->data - (char*)b->base;
+}
+
+/* Returns the number of bytes that may be appended to the tail end of ofpbuf
+ * 'b' before the ofpbuf must be reallocated. */
+size_t
+ofpbuf_tailroom(const struct ofpbuf *b)
+{
+    return (char*)ofpbuf_end(b) - (char*)ofpbuf_tail(b);
+}
+
 static void
 ofpbuf_copy__(struct ofpbuf *b, uint8_t *new_base,
               size_t new_headroom, size_t new_tailroom)
 {
-    const uint8_t *old_base = ofpbuf_base(b);
+    const uint8_t *old_base = b->base;
     size_t old_headroom = ofpbuf_headroom(b);
     size_t old_tailroom = ofpbuf_tailroom(b);
     size_t copy_headroom = MIN(old_headroom, new_headroom);
@@ -230,7 +251,7 @@ ofpbuf_copy__(struct ofpbuf *b, uint8_t *new_base,
 
     memcpy(&new_base[new_headroom - copy_headroom],
            &old_base[old_headroom - copy_headroom],
-           copy_headroom + ofpbuf_size(b) + copy_tailroom);
+           copy_headroom + b->size + copy_tailroom);
 }
 
 /* Reallocates 'b' so that it has exactly 'new_headroom' and 'new_tailroom'
@@ -241,24 +262,21 @@ ofpbuf_resize__(struct ofpbuf *b, size_t new_headroom, size_t new_tailroom)
     void *new_base, *new_data;
     size_t new_allocated;
 
-    new_allocated = new_headroom + ofpbuf_size(b) + new_tailroom;
+    new_allocated = new_headroom + b->size + new_tailroom;
 
     switch (b->source) {
-    case OFPBUF_DPDK:
-        OVS_NOT_REACHED();
-
     case OFPBUF_MALLOC:
         if (new_headroom == ofpbuf_headroom(b)) {
-            new_base = xrealloc(ofpbuf_base(b), new_allocated);
+            new_base = xrealloc(b->base, new_allocated);
         } else {
             new_base = xmalloc(new_allocated);
             ofpbuf_copy__(b, new_base, new_headroom, new_tailroom);
-            free(ofpbuf_base(b));
+            free(b->base);
         }
         break;
 
     case OFPBUF_STACK:
-        OVS_NOT_REACHED();
+        NOT_REACHED();
 
     case OFPBUF_STUB:
         b->source = OFPBUF_MALLOC;
@@ -267,20 +285,31 @@ ofpbuf_resize__(struct ofpbuf *b, size_t new_headroom, size_t new_tailroom)
         break;
 
     default:
-        OVS_NOT_REACHED();
+        NOT_REACHED();
     }
 
     b->allocated = new_allocated;
-    ofpbuf_set_base(b, new_base);
+    b->base = new_base;
 
     new_data = (char *) new_base + new_headroom;
-    if (ofpbuf_data(b) != new_data) {
-        if (b->frame) {
-            uintptr_t data_delta = (char *) new_data - (char *) ofpbuf_data(b);
-
-            b->frame = (char *) b->frame + data_delta;
+    if (b->data != new_data) {
+        uintptr_t data_delta = (char *) new_data - (char *) b->data;
+        b->data = new_data;
+        if (b->l2) {
+            b->l2 = (char *) b->l2 + data_delta;
         }
-        ofpbuf_set_data(b, new_data);
+        if (b->l2_5) {
+            b->l2_5 = (char *) b->l2_5 + data_delta;
+        }
+        if (b->l3) {
+            b->l3 = (char *) b->l3 + data_delta;
+        }
+        if (b->l4) {
+            b->l4 = (char *) b->l4 + data_delta;
+        }
+        if (b->l7) {
+            b->l7 = (char *) b->l7 + data_delta;
+        }
     }
 }
 
@@ -314,8 +343,6 @@ ofpbuf_prealloc_headroom(struct ofpbuf *b, size_t size)
 void
 ofpbuf_trim(struct ofpbuf *b)
 {
-    ovs_assert(b->source != OFPBUF_DPDK);
-
     if (b->source == OFPBUF_MALLOC
         && (ofpbuf_headroom(b) || ofpbuf_tailroom(b))) {
         ofpbuf_resize__(b, 0, 0);
@@ -327,26 +354,8 @@ ofpbuf_trim(struct ofpbuf *b)
 void
 ofpbuf_padto(struct ofpbuf *b, size_t length)
 {
-    if (ofpbuf_size(b) < length) {
-        ofpbuf_put_zeros(b, length - ofpbuf_size(b));
-    }
-}
-
-/* Shifts all of the data within the allocated space in 'b' by 'delta' bytes.
- * For example, a 'delta' of 1 would cause each byte of data to move one byte
- * forward (from address 'p' to 'p+1'), and a 'delta' of -1 would cause each
- * byte to move one byte backward (from 'p' to 'p-1'). */
-void
-ofpbuf_shift(struct ofpbuf *b, int delta)
-{
-    ovs_assert(delta > 0 ? delta <= ofpbuf_tailroom(b)
-               : delta < 0 ? -delta <= ofpbuf_headroom(b)
-               : true);
-
-    if (delta != 0) {
-        char *dst = (char *) ofpbuf_data(b) + delta;
-        memmove(dst, ofpbuf_data(b), ofpbuf_size(b));
-        ofpbuf_set_data(b, dst);
+    if (b->size < length) {
+        ofpbuf_put_zeros(b, length - b->size);
     }
 }
 
@@ -359,7 +368,7 @@ ofpbuf_put_uninit(struct ofpbuf *b, size_t size)
     void *p;
     ofpbuf_prealloc_tailroom(b, size);
     p = ofpbuf_tail(b);
-    ofpbuf_set_size(b, ofpbuf_size(b) + size);
+    b->size += size;
     return p;
 }
 
@@ -393,16 +402,16 @@ ofpbuf_put(struct ofpbuf *b, const void *p, size_t size)
 char *
 ofpbuf_put_hex(struct ofpbuf *b, const char *s, size_t *n)
 {
-    size_t initial_size = ofpbuf_size(b);
+    size_t initial_size = b->size;
     for (;;) {
         uint8_t byte;
         bool ok;
 
-        s += strspn(s, " \t\r\n");
+        s += strspn(s, " ");
         byte = hexits_value(s, 2, &ok);
         if (!ok) {
             if (n) {
-                *n = ofpbuf_size(b) - initial_size;
+                *n = b->size - initial_size;
             }
             return CONST_CAST(char *, s);
         }
@@ -417,20 +426,9 @@ ofpbuf_put_hex(struct ofpbuf *b, const char *s, size_t *n)
 void
 ofpbuf_reserve(struct ofpbuf *b, size_t size)
 {
-    ovs_assert(!ofpbuf_size(b));
+    ovs_assert(!b->size);
     ofpbuf_prealloc_tailroom(b, size);
-    ofpbuf_set_data(b, (char*)ofpbuf_data(b) + size);
-}
-
-/* Reserves 'size' bytes of headroom so that they can be later allocated with
- * ofpbuf_push_uninit() without reallocating the ofpbuf. */
-void
-ofpbuf_reserve_with_tailroom(struct ofpbuf *b, size_t headroom,
-                             size_t tailroom)
-{
-    ovs_assert(!ofpbuf_size(b));
-    ofpbuf_prealloc_tailroom(b, headroom + tailroom);
-    ofpbuf_set_data(b, (char*)ofpbuf_data(b) + headroom);
+    b->data = (char*)b->data + size;
 }
 
 /* Prefixes 'size' bytes to the head end of 'b', reallocating and copying its
@@ -440,9 +438,9 @@ void *
 ofpbuf_push_uninit(struct ofpbuf *b, size_t size)
 {
     ofpbuf_prealloc_headroom(b, size);
-    ofpbuf_set_data(b, (char*)ofpbuf_data(b) - size);
-    ofpbuf_set_size(b, ofpbuf_size(b) + size);
-    return ofpbuf_data(b);
+    b->data = (char*)b->data - size;
+    b->size += size;
+    return b->data;
 }
 
 /* Prefixes 'size' zeroed bytes to the head end of 'b', reallocating and
@@ -467,6 +465,67 @@ ofpbuf_push(struct ofpbuf *b, const void *p, size_t size)
     return dst;
 }
 
+/* If 'b' contains at least 'offset + size' bytes of data, returns a pointer to
+ * byte 'offset'.  Otherwise, returns a null pointer. */
+void *
+ofpbuf_at(const struct ofpbuf *b, size_t offset, size_t size)
+{
+    return offset + size <= b->size ? (char *) b->data + offset : NULL;
+}
+
+/* Returns a pointer to byte 'offset' in 'b', which must contain at least
+ * 'offset + size' bytes of data. */
+void *
+ofpbuf_at_assert(const struct ofpbuf *b, size_t offset, size_t size)
+{
+    ovs_assert(offset + size <= b->size);
+    return ((char *) b->data) + offset;
+}
+
+/* Returns the byte following the last byte of data in use in 'b'. */
+void *
+ofpbuf_tail(const struct ofpbuf *b)
+{
+    return (char *) b->data + b->size;
+}
+
+/* Returns the byte following the last byte allocated for use (but not
+ * necessarily in use) by 'b'. */
+void *
+ofpbuf_end(const struct ofpbuf *b)
+{
+    return (char *) b->base + b->allocated;
+}
+
+/* Clears any data from 'b'. */
+void
+ofpbuf_clear(struct ofpbuf *b)
+{
+    b->data = b->base;
+    b->size = 0;
+}
+
+/* Removes 'size' bytes from the head end of 'b', which must contain at least
+ * 'size' bytes of data.  Returns the first byte of data removed. */
+void *
+ofpbuf_pull(struct ofpbuf *b, size_t size)
+{
+    void *data = b->data;
+    ovs_assert(b->size >= size);
+    b->data = (char*)b->data + size;
+    b->size -= size;
+    return data;
+}
+
+/* If 'b' has at least 'size' bytes of data, removes that many bytes from the
+ * head end of 'b' and returns the first byte removed.  Otherwise, returns a
+ * null pointer without modifying 'b'. */
+void *
+ofpbuf_try_pull(struct ofpbuf *b, size_t size)
+{
+    return b->size >= size ? ofpbuf_pull(b, size) : NULL;
+}
+
 /* Returns the data in 'b' as a block of malloc()'d memory and frees the buffer
  * within 'b'.  (If 'b' itself was dynamically allocated, e.g. with
  * ofpbuf_new(), then it should still be freed with, e.g., ofpbuf_delete().) */
@@ -474,18 +533,15 @@ void *
 ofpbuf_steal_data(struct ofpbuf *b)
 {
     void *p;
-    ovs_assert(b->source != OFPBUF_DPDK);
-
-    if (b->source == OFPBUF_MALLOC && ofpbuf_data(b) == ofpbuf_base(b)) {
-        p = ofpbuf_data(b);
+    if (b->source == OFPBUF_MALLOC && b->data == b->base) {
+        p = b->data;
     } else {
-        p = xmemdup(ofpbuf_data(b), ofpbuf_size(b));
+        p = xmemdup(b->data, b->size);
         if (b->source == OFPBUF_MALLOC) {
-            free(ofpbuf_base(b));
+            free(b->base);
         }
     }
-    ofpbuf_set_base(b, NULL);
-    ofpbuf_set_data(b, NULL);
+    b->base = b->data = NULL;
     return p;
 }
 
@@ -497,10 +553,10 @@ ofpbuf_to_string(const struct ofpbuf *b, size_t maxbytes)
     struct ds s;
 
     ds_init(&s);
-    ds_put_format(&s, "size=%"PRIu32", allocated=%"PRIu32", head=%"PRIuSIZE", tail=%"PRIuSIZE"\n",
-                  ofpbuf_size(b), b->allocated,
+    ds_put_format(&s, "size=%zu, allocated=%zu, head=%zu, tail=%zu\n",
+                  b->size, b->allocated,
                   ofpbuf_headroom(b), ofpbuf_tailroom(b));
-    ds_put_hex_dump(&s, ofpbuf_data(b), MIN(ofpbuf_size(b), maxbytes), 0, false);
+    ds_put_hex_dump(&s, b->data, MIN(b->size, maxbytes), 0, false);
     return ds_cstr(&s);
 }
 
@@ -515,43 +571,4 @@ ofpbuf_list_delete(struct list *list)
         list_remove(&b->list_node);
         ofpbuf_delete(b);
     }
-}
-
-static inline void
-ofpbuf_adjust_layer_offset(uint16_t *offset, int increment)
-{
-    if (*offset != UINT16_MAX) {
-        *offset += increment;
-    }
-}
-
-/* Adjust the size of the l2_5 portion of the ofpbuf, updating the l2
- * pointer and the layer offsets.  The caller is responsible for
- * modifying the contents. */
-void *
-ofpbuf_resize_l2_5(struct ofpbuf *b, int increment)
-{
-    if (increment >= 0) {
-        ofpbuf_push_uninit(b, increment);
-    } else {
-        ofpbuf_pull(b, -increment);
-    }
-
-    b->frame = ofpbuf_data(b);
-    /* Adjust layer offsets after l2_5. */
-    ofpbuf_adjust_layer_offset(&b->l3_ofs, increment);
-    ofpbuf_adjust_layer_offset(&b->l4_ofs, increment);
-
-    return b->frame;
-}
-
-/* Adjust the size of the l2 portion of the ofpbuf, updating the l2
- * pointer and the layer offsets.  The caller is responsible for
- * modifying the contents. */
-void *
-ofpbuf_resize_l2(struct ofpbuf *b, int increment)
-{
-    ofpbuf_resize_l2_5(b, increment);
-    ofpbuf_adjust_layer_offset(&b->l2_5_ofs, increment);
-    return b->frame;
 }

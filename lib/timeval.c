@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008, 2009, 2010, 2011, 2012, 2013, 2014 Nicira, Inc.
+ * Copyright (c) 2008, 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,7 +18,6 @@
 #include "timeval.h"
 #include <errno.h>
 #include <poll.h>
-#include <pthread.h>
 #include <signal.h>
 #include <stdlib.h>
 #include <string.h>
@@ -31,140 +30,274 @@
 #include "fatal-signal.h"
 #include "hash.h"
 #include "hmap.h"
-#include "ovs-rcu.h"
-#include "ovs-thread.h"
 #include "signals.h"
-#include "seq.h"
 #include "unixctl.h"
 #include "util.h"
 #include "vlog.h"
 
+/* backtrace() from <execinfo.h> is really useful, but it is not signal safe
+ * everywhere, such as on x86-64.  */
+#if HAVE_BACKTRACE && !defined __x86_64__
+#  define USE_BACKTRACE 1
+#  include <execinfo.h>
+#else
+#  define USE_BACKTRACE 0
+#endif
+
 VLOG_DEFINE_THIS_MODULE(timeval);
 
-#ifdef _WIN32
-typedef unsigned int clockid_t;
+/* The clock to use for measuring time intervals.  This is CLOCK_MONOTONIC by
+ * preference, but on systems that don't have a monotonic clock we fall back
+ * to CLOCK_REALTIME. */
+static clockid_t monotonic_clock;
 
-#ifndef CLOCK_MONOTONIC
-#define CLOCK_MONOTONIC 1
-#endif
+/* Has a timer tick occurred? Only relevant if CACHE_TIME is true.
+ *
+ * We initialize these to true to force time_init() to get called on the first
+ * call to time_msec() or another function that queries the current time. */
+static volatile sig_atomic_t wall_tick = true;
+static volatile sig_atomic_t monotonic_tick = true;
 
-#ifndef CLOCK_REALTIME
-#define CLOCK_REALTIME 2
-#endif
-
-/* Number of 100 ns intervals from January 1, 1601 till January 1, 1970. */
-static ULARGE_INTEGER unix_epoch;
-#endif /* _WIN32 */
-
-struct clock {
-    clockid_t id;               /* CLOCK_MONOTONIC or CLOCK_REALTIME. */
-
-    /* Features for use by unit tests.  Protected by 'mutex'. */
-    struct ovs_mutex mutex;
-    atomic_bool slow_path;             /* True if warped or stopped. */
-    struct timespec warp OVS_GUARDED;  /* Offset added for unit tests. */
-    bool stopped OVS_GUARDED;          /* Disable real-time updates if true. */
-    struct timespec cache OVS_GUARDED; /* Last time read from kernel. */
-};
-
-/* Our clocks. */
-static struct clock monotonic_clock; /* CLOCK_MONOTONIC, if available. */
-static struct clock wall_clock;      /* CLOCK_REALTIME. */
+/* The current time, as of the last refresh. */
+static struct timespec wall_time;
+static struct timespec monotonic_time;
 
 /* The monotonic time at which the time module was initialized. */
 static long long int boot_time;
 
-/* True only when timeval_dummy_register() is called. */
-static bool timewarp_enabled;
-/* Reference to the seq struct.  Threads other than main thread can
- * wait on timewarp_seq and be waken up when time is warped. */
-static struct seq *timewarp_seq;
-/* Last value of 'timewarp_seq'. */
-DEFINE_STATIC_PER_THREAD_DATA(uint64_t, last_seq, 0);
+/* features for use by unit tests. */
+static struct timespec warp_offset; /* Offset added to monotonic_time. */
+static bool time_stopped;           /* Disables real-time updates, if true. */
 
-/* Monotonic time in milliseconds at which to die with SIGALRM (if not
- * LLONG_MAX). */
+/* Time in milliseconds at which to die with SIGALRM (if not LLONG_MAX). */
 static long long int deadline = LLONG_MAX;
 
-/* Monotonic time, in milliseconds, at which the last call to time_poll() woke
- * up. */
-DEFINE_STATIC_PER_THREAD_DATA(long long int, last_wakeup, 0);
+struct trace {
+    void *backtrace[32]; /* Populated by backtrace(). */
+    size_t n_frames;     /* Number of frames in 'backtrace'. */
 
+    /* format_backtraces() helper data. */
+    struct hmap_node node;
+    size_t count;
+};
+
+#define MAX_TRACES 50
+static struct trace traces[MAX_TRACES];
+static size_t trace_head = 0;
+
+static void set_up_timer(void);
+static void set_up_signal(int flags);
+static void sigalrm_handler(int);
+static void refresh_wall_if_ticked(void);
+static void refresh_monotonic_if_ticked(void);
+static void block_sigalrm(sigset_t *);
+static void unblock_sigalrm(const sigset_t *);
 static void log_poll_interval(long long int last_wakeup);
 static struct rusage *get_recent_rusage(void);
 static void refresh_rusage(void);
 static void timespec_add(struct timespec *sum,
                          const struct timespec *a, const struct timespec *b);
+static unixctl_cb_func backtrace_cb;
 
-static void
-init_clock(struct clock *c, clockid_t id)
+#if !USE_BACKTRACE
+static int
+backtrace(void **buffer OVS_UNUSED, int size OVS_UNUSED)
 {
-    memset(c, 0, sizeof *c);
-    c->id = id;
-    ovs_mutex_init(&c->mutex);
-    atomic_init(&c->slow_path, false);
-    xclock_gettime(c->id, &c->cache);
-    timewarp_seq = seq_create();
+    NOT_REACHED();
 }
 
-static void
-do_init_time(void)
+static char **
+backtrace_symbols(void *const *buffer OVS_UNUSED, int size OVS_UNUSED)
 {
-    struct timespec ts;
-
-#ifdef _WIN32
-    /* Calculate number of 100-nanosecond intervals till 01/01/1970. */
-    SYSTEMTIME unix_epoch_st = { 1970, 1, 0, 1, 0, 0, 0, 0};
-    FILETIME unix_epoch_ft;
-
-    SystemTimeToFileTime(&unix_epoch_st, &unix_epoch_ft);
-    unix_epoch.LowPart = unix_epoch_ft.dwLowDateTime;
-    unix_epoch.HighPart = unix_epoch_ft.dwHighDateTime;
-#endif
-
-    coverage_init();
-
-    init_clock(&monotonic_clock, (!clock_gettime(CLOCK_MONOTONIC, &ts)
-                                  ? CLOCK_MONOTONIC
-                                  : CLOCK_REALTIME));
-    init_clock(&wall_clock, CLOCK_REALTIME);
-    boot_time = timespec_to_msec(&monotonic_clock.cache);
+    NOT_REACHED();
 }
+#endif  /* !USE_BACKTRACE */
 
 /* Initializes the timetracking module, if not already initialized. */
 static void
 time_init(void)
 {
-    static pthread_once_t once = PTHREAD_ONCE_INIT;
-    pthread_once(&once, do_init_time);
+    static bool inited;
+
+    if (inited) {
+        return;
+    }
+    inited = true;
+
+    /* The implementation of backtrace() in glibc does some one time
+     * initialization which is not signal safe.  This can cause deadlocks if
+     * run from the signal handler.  As a workaround, force the initialization
+     * to happen here. */
+    if (USE_BACKTRACE) {
+        void *bt[1];
+
+        backtrace(bt, ARRAY_SIZE(bt));
+    }
+
+    memset(traces, 0, sizeof traces);
+
+    if (USE_BACKTRACE && CACHE_TIME) {
+        unixctl_command_register("backtrace", "", 0, 0, backtrace_cb, NULL);
+    }
+
+    coverage_init();
+
+    if (!clock_gettime(CLOCK_MONOTONIC, &monotonic_time)) {
+        monotonic_clock = CLOCK_MONOTONIC;
+    } else {
+        monotonic_clock = CLOCK_REALTIME;
+        VLOG_DBG("monotonic timer not available");
+    }
+
+    set_up_signal(SA_RESTART);
+    set_up_timer();
+
+    boot_time = time_msec();
 }
 
 static void
-time_timespec__(struct clock *c, struct timespec *ts)
+set_up_signal(int flags)
 {
-    bool slow_path;
+    struct sigaction sa;
 
+    memset(&sa, 0, sizeof sa);
+    sa.sa_handler = sigalrm_handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = flags;
+    xsigaction(SIGALRM, &sa, NULL);
+}
+
+/* Remove SA_RESTART from the flags for SIGALRM, so that any system call that
+ * is interrupted by the periodic timer interrupt will return EINTR instead of
+ * continuing after the signal handler returns.
+ *
+ * time_disable_restart() and time_enable_restart() may be usefully wrapped
+ * around function calls that might otherwise block forever unless interrupted
+ * by a signal, e.g.:
+ *
+ *   time_disable_restart();
+ *   fcntl(fd, F_SETLKW, &lock);
+ *   time_enable_restart();
+ */
+void
+time_disable_restart(void)
+{
+    time_init();
+    set_up_signal(0);
+}
+
+/* Add SA_RESTART to the flags for SIGALRM, so that any system call that
+ * is interrupted by the periodic timer interrupt will continue after the
+ * signal handler returns instead of returning EINTR. */
+void
+time_enable_restart(void)
+{
+    time_init();
+    set_up_signal(SA_RESTART);
+}
+
+static void
+set_up_timer(void)
+{
+    static timer_t timer_id;    /* "static" to avoid apparent memory leak. */
+    struct itimerspec itimer;
+
+    if (!CACHE_TIME) {
+        return;
+    }
+
+    if (timer_create(monotonic_clock, NULL, &timer_id)) {
+        VLOG_FATAL("timer_create failed (%s)", strerror(errno));
+    }
+
+    itimer.it_interval.tv_sec = 0;
+    itimer.it_interval.tv_nsec = TIME_UPDATE_INTERVAL * 1000 * 1000;
+    itimer.it_value = itimer.it_interval;
+
+    if (timer_settime(timer_id, 0, &itimer, NULL)) {
+        VLOG_FATAL("timer_settime failed (%s)", strerror(errno));
+    }
+}
+
+/* Set up the interval timer, to ensure that time advances even without calling
+ * time_refresh().
+ *
+ * A child created with fork() does not inherit the parent's interval timer, so
+ * this function needs to be called from the child after fork(). */
+void
+time_postfork(void)
+{
+    time_init();
+    set_up_timer();
+}
+
+static void
+refresh_wall(void)
+{
+    time_init();
+    clock_gettime(CLOCK_REALTIME, &wall_time);
+    wall_tick = false;
+}
+
+static void
+refresh_monotonic(void)
+{
     time_init();
 
-    atomic_read_explicit(&c->slow_path, &slow_path, memory_order_relaxed);
-    if (!slow_path) {
-        xclock_gettime(c->id, ts);
-    } else {
-        struct timespec warp;
-        struct timespec cache;
-        bool stopped;
-
-        ovs_mutex_lock(&c->mutex);
-        stopped = c->stopped;
-        warp = c->warp;
-        cache = c->cache;
-        ovs_mutex_unlock(&c->mutex);
-
-        if (!stopped) {
-            xclock_gettime(c->id, &cache);
+    if (!time_stopped) {
+        if (monotonic_clock == CLOCK_MONOTONIC) {
+            clock_gettime(monotonic_clock, &monotonic_time);
+        } else {
+            refresh_wall_if_ticked();
+            monotonic_time = wall_time;
         }
-        timespec_add(ts, &cache, &warp);
+        timespec_add(&monotonic_time, &monotonic_time, &warp_offset);
+
+        monotonic_tick = false;
     }
+}
+
+/* Forces a refresh of the current time from the kernel.  It is not usually
+ * necessary to call this function, since the time will be refreshed
+ * automatically at least every TIME_UPDATE_INTERVAL milliseconds.  If
+ * CACHE_TIME is false, we will always refresh the current time so this
+ * function has no effect. */
+void
+time_refresh(void)
+{
+    wall_tick = monotonic_tick = true;
+}
+
+/* Returns a monotonic timer, in seconds. */
+time_t
+time_now(void)
+{
+    refresh_monotonic_if_ticked();
+    return monotonic_time.tv_sec;
+}
+
+/* Returns the current time, in seconds. */
+time_t
+time_wall(void)
+{
+    refresh_wall_if_ticked();
+    return wall_time.tv_sec;
+}
+
+/* Returns a monotonic timer, in ms (within TIME_UPDATE_INTERVAL ms). */
+long long int
+time_msec(void)
+{
+    refresh_monotonic_if_ticked();
+    return timespec_to_msec(&monotonic_time);
+}
+
+/* Returns the current time, in ms (within TIME_UPDATE_INTERVAL ms). */
+long long int
+time_wall_msec(void)
+{
+    refresh_wall_if_ticked();
+    return timespec_to_msec(&wall_time);
 }
 
 /* Stores a monotonic timer, accurate within TIME_UPDATE_INTERVAL ms, into
@@ -172,7 +305,8 @@ time_timespec__(struct clock *c, struct timespec *ts)
 void
 time_timespec(struct timespec *ts)
 {
-    time_timespec__(&monotonic_clock, ts);
+    refresh_monotonic_if_ticked();
+    *ts = monotonic_time;
 }
 
 /* Stores the current time, accurate within TIME_UPDATE_INTERVAL ms, into
@@ -180,53 +314,8 @@ time_timespec(struct timespec *ts)
 void
 time_wall_timespec(struct timespec *ts)
 {
-    time_timespec__(&wall_clock, ts);
-}
-
-static time_t
-time_sec__(struct clock *c)
-{
-    struct timespec ts;
-
-    time_timespec__(c, &ts);
-    return ts.tv_sec;
-}
-
-/* Returns a monotonic timer, in seconds. */
-time_t
-time_now(void)
-{
-    return time_sec__(&monotonic_clock);
-}
-
-/* Returns the current time, in seconds. */
-time_t
-time_wall(void)
-{
-    return time_sec__(&wall_clock);
-}
-
-static long long int
-time_msec__(struct clock *c)
-{
-    struct timespec ts;
-
-    time_timespec__(c, &ts);
-    return timespec_to_msec(&ts);
-}
-
-/* Returns a monotonic timer, in ms (within TIME_UPDATE_INTERVAL ms). */
-long long int
-time_msec(void)
-{
-    return time_msec__(&monotonic_clock);
-}
-
-/* Returns the current time, in ms (within TIME_UPDATE_INTERVAL ms). */
-long long int
-time_wall_msec(void)
-{
-    return time_msec__(&wall_clock);
+    refresh_wall_if_ticked();
+    *ts = wall_time;
 }
 
 /* Configures the program to die with SIGALRM 'secs' seconds from now, if
@@ -237,12 +326,17 @@ time_alarm(unsigned int secs)
     long long int now;
     long long int msecs;
 
-    assert_single_threaded();
+    sigset_t oldsigs;
+
     time_init();
+    time_refresh();
 
     now = time_msec();
     msecs = secs * 1000LL;
+
+    block_sigalrm(&oldsigs);
     deadline = now < LLONG_MAX - msecs ? now + msecs : LLONG_MAX;
+    unblock_sigalrm(&oldsigs);
 }
 
 /* Like poll(), except:
@@ -256,22 +350,26 @@ time_alarm(unsigned int secs)
  *        timeout is reached.  (Because of this property, this function will
  *        never return -EINTR.)
  *
+ *      - As a side effect, refreshes the current time (like time_refresh()).
+ *
  * Stores the number of milliseconds elapsed during poll in '*elapsed'. */
 int
-time_poll(struct pollfd *pollfds, int n_pollfds, HANDLE *handles OVS_UNUSED,
-          long long int timeout_when, int *elapsed)
+time_poll(struct pollfd *pollfds, int n_pollfds, long long int timeout_when,
+          int *elapsed)
 {
-    long long int *last_wakeup = last_wakeup_get();
+    static long long int last_wakeup = 0;
     long long int start;
-    int retval = 0;
+    sigset_t oldsigs;
+    bool blocked;
+    int retval;
 
-    time_init();
-    coverage_clear();
-    coverage_run();
-    if (*last_wakeup) {
-        log_poll_interval(*last_wakeup);
+    time_refresh();
+    if (last_wakeup) {
+        log_poll_interval(last_wakeup);
     }
+    coverage_clear();
     start = time_msec();
+    blocked = false;
 
     timeout_when = MIN(timeout_when, deadline);
 
@@ -287,43 +385,14 @@ time_poll(struct pollfd *pollfds, int n_pollfds, HANDLE *handles OVS_UNUSED,
             time_left = timeout_when - now;
         }
 
-        if (!time_left) {
-            ovsrcu_quiesce();
-        } else {
-            ovsrcu_quiesce_start();
-        }
-
-#ifndef _WIN32
         retval = poll(pollfds, n_pollfds, time_left);
         if (retval < 0) {
             retval = -errno;
         }
-#else
-        if (n_pollfds > MAXIMUM_WAIT_OBJECTS) {
-            VLOG_ERR("Cannot handle more than maximum wait objects\n");
-        } else if (n_pollfds != 0) {
-            retval = WaitForMultipleObjects(n_pollfds, handles, FALSE,
-                                            time_left);
-        }
-        if (retval < 0) {
-            /* XXX This will be replace by a win error to errno
-               conversion function */
-            retval = -WSAGetLastError();
-            retval = -EINVAL;
-        }
-#endif
 
-        if (time_left) {
-            ovsrcu_quiesce_end();
-        }
-
+        time_refresh();
         if (deadline <= time_msec()) {
-#ifndef _WIN32
             fatal_signal_handler(SIGALRM);
-#else
-            VLOG_ERR("wake up from WaitForMultipleObjects after deadline");
-            fatal_signal_handler(SIGTERM);
-#endif
             if (retval < 0) {
                 retval = 0;
             }
@@ -333,11 +402,65 @@ time_poll(struct pollfd *pollfds, int n_pollfds, HANDLE *handles OVS_UNUSED,
         if (retval != -EINTR) {
             break;
         }
+
+        if (!blocked && CACHE_TIME) {
+            block_sigalrm(&oldsigs);
+            blocked = true;
+        }
     }
-    *last_wakeup = time_msec();
+    if (blocked) {
+        unblock_sigalrm(&oldsigs);
+    }
+    last_wakeup = time_msec();
     refresh_rusage();
-    *elapsed = *last_wakeup - start;
+    *elapsed = last_wakeup - start;
     return retval;
+}
+
+static void
+sigalrm_handler(int sig_nr OVS_UNUSED)
+{
+    wall_tick = true;
+    monotonic_tick = true;
+
+    if (USE_BACKTRACE && CACHE_TIME) {
+        struct trace *trace = &traces[trace_head];
+
+        trace->n_frames = backtrace(trace->backtrace,
+                                    ARRAY_SIZE(trace->backtrace));
+        trace_head = (trace_head + 1) % MAX_TRACES;
+    }
+}
+
+static void
+refresh_wall_if_ticked(void)
+{
+    if (!CACHE_TIME || wall_tick) {
+        refresh_wall();
+    }
+}
+
+static void
+refresh_monotonic_if_ticked(void)
+{
+    if (!CACHE_TIME || monotonic_tick) {
+        refresh_monotonic();
+    }
+}
+
+static void
+block_sigalrm(sigset_t *oldsigs)
+{
+    sigset_t sigalrm;
+    sigemptyset(&sigalrm);
+    sigaddset(&sigalrm, SIGALRM);
+    xsigprocmask(SIG_BLOCK, &sigalrm, oldsigs);
+}
+
+static void
+unblock_sigalrm(const sigset_t *oldsigs)
+{
+    xsigprocmask(SIG_SETMASK, oldsigs, NULL);
 }
 
 long long int
@@ -353,7 +476,7 @@ timeval_to_msec(const struct timeval *tv)
 }
 
 /* Returns the monotonic time at which the "time" module was initialized, in
- * milliseconds. */
+ * milliseconds(). */
 long long int
 time_boot_msec(void)
 {
@@ -361,91 +484,11 @@ time_boot_msec(void)
     return boot_time;
 }
 
-#ifdef _WIN32
-static ULARGE_INTEGER
-xgetfiletime(void)
-{
-    ULARGE_INTEGER current_time;
-    FILETIME current_time_ft;
-
-    /* Returns current time in UTC as a 64-bit value representing the number
-     * of 100-nanosecond intervals since January 1, 1601 . */
-    GetSystemTimePreciseAsFileTime(&current_time_ft);
-    current_time.LowPart = current_time_ft.dwLowDateTime;
-    current_time.HighPart = current_time_ft.dwHighDateTime;
-
-    return current_time;
-}
-
-static int
-clock_gettime(clock_t id, struct timespec *ts)
-{
-    if (id == CLOCK_MONOTONIC) {
-        static LARGE_INTEGER freq;
-        LARGE_INTEGER count;
-        long long int ns;
-
-        if (!freq.QuadPart) {
-            /* Number of counts per second. */
-            QueryPerformanceFrequency(&freq);
-        }
-        /* Total number of counts from a starting point. */
-        QueryPerformanceCounter(&count);
-
-        /* Total nano seconds from a starting point. */
-        ns = (double) count.QuadPart / freq.QuadPart * 1000000000;
-
-        ts->tv_sec = count.QuadPart / freq.QuadPart;
-        ts->tv_nsec = ns % 1000000000;
-    } else if (id == CLOCK_REALTIME) {
-        ULARGE_INTEGER current_time = xgetfiletime();
-
-        /* Time from Epoch to now. */
-        ts->tv_sec = (current_time.QuadPart - unix_epoch.QuadPart) / 10000000;
-        ts->tv_nsec = ((current_time.QuadPart - unix_epoch.QuadPart) %
-                       10000000) * 100;
-    } else {
-        return -1;
-    }
-}
-#endif /* _WIN32 */
-
 void
 xgettimeofday(struct timeval *tv)
 {
-#ifndef _WIN32
     if (gettimeofday(tv, NULL) == -1) {
-        VLOG_FATAL("gettimeofday failed (%s)", ovs_strerror(errno));
-    }
-#else
-    ULARGE_INTEGER current_time = xgetfiletime();
-
-    tv->tv_sec = (current_time.QuadPart - unix_epoch.QuadPart) / 10000000;
-    tv->tv_usec = ((current_time.QuadPart - unix_epoch.QuadPart) %
-                   10000000) / 10;
-#endif
-}
-
-void
-xclock_gettime(clock_t id, struct timespec *ts)
-{
-    if (clock_gettime(id, ts) == -1) {
-        /* It seems like a bad idea to try to use vlog here because it is
-         * likely to try to check the current time. */
-        ovs_abort(errno, "xclock_gettime() failed");
-    }
-}
-
-/* Makes threads wait on timewarp_seq and be waken up when time is warped.
- * This function will be no-op unless timeval_dummy_register() is called. */
-void
-timewarp_wait(void)
-{
-    if (timewarp_enabled) {
-        uint64_t *last_seq = last_seq_get();
-
-        *last_seq = seq_read(timewarp_seq);
-        seq_wait(timewarp_seq, *last_seq);
+        VLOG_FATAL("gettimeofday failed (%s)", strerror(errno));
     }
 }
 
@@ -472,24 +515,12 @@ timespec_add(struct timespec *sum,
     *sum = tmp;
 }
 
-static bool
-is_warped(const struct clock *c)
-{
-    bool warped;
-
-    ovs_mutex_lock(&c->mutex);
-    warped = monotonic_clock.warp.tv_sec || monotonic_clock.warp.tv_nsec;
-    ovs_mutex_unlock(&c->mutex);
-
-    return warped;
-}
-
 static void
 log_poll_interval(long long int last_wakeup)
 {
     long long int interval = time_msec() - last_wakeup;
 
-    if (interval >= 1000 && !is_warped(&monotonic_clock)) {
+    if (interval >= 1000 && !warp_offset.tv_sec && !warp_offset.tv_nsec) {
         const struct rusage *last_rusage = get_recent_rusage();
         struct rusage rusage;
 
@@ -530,66 +561,37 @@ struct cpu_usage {
     unsigned long long int cpu; /* Total user+system CPU usage when sampled. */
 };
 
-struct cpu_tracker {
-    struct cpu_usage older;
-    struct cpu_usage newer;
-    int cpu_usage;
-
-    struct rusage recent_rusage;
-};
-DEFINE_PER_THREAD_MALLOCED_DATA(struct cpu_tracker *, cpu_tracker_var);
-
-static struct cpu_tracker *
-get_cpu_tracker(void)
-{
-    struct cpu_tracker *t = cpu_tracker_var_get();
-    if (!t) {
-        t = xzalloc(sizeof *t);
-        t->older.when = LLONG_MIN;
-        t->newer.when = LLONG_MIN;
-        cpu_tracker_var_set_unsafe(t);
-    }
-    return t;
-}
+static struct rusage recent_rusage;
+static struct cpu_usage older = { LLONG_MIN, 0 };
+static struct cpu_usage newer = { LLONG_MIN, 0 };
+static int cpu_usage = -1;
 
 static struct rusage *
 get_recent_rusage(void)
 {
-    return &get_cpu_tracker()->recent_rusage;
-}
-
-static int
-getrusage_thread(struct rusage *rusage OVS_UNUSED)
-{
-#ifdef RUSAGE_THREAD
-    return getrusage(RUSAGE_THREAD, rusage);
-#else
-    errno = EINVAL;
-    return -1;
-#endif
+    return &recent_rusage;
 }
 
 static void
 refresh_rusage(void)
 {
-    struct cpu_tracker *t = get_cpu_tracker();
-    struct rusage *recent_rusage = &t->recent_rusage;
+    long long int now;
 
-    if (!getrusage_thread(recent_rusage)) {
-        long long int now = time_msec();
-        if (now >= t->newer.when + 3 * 1000) {
-            t->older = t->newer;
-            t->newer.when = now;
-            t->newer.cpu = (timeval_to_msec(&recent_rusage->ru_utime) +
-                            timeval_to_msec(&recent_rusage->ru_stime));
+    now = time_msec();
+    getrusage(RUSAGE_SELF, &recent_rusage);
 
-            if (t->older.when != LLONG_MIN && t->newer.cpu > t->older.cpu) {
-                unsigned int dividend = t->newer.cpu - t->older.cpu;
-                unsigned int divisor = (t->newer.when - t->older.when) / 100;
-                t->cpu_usage = divisor > 0 ? dividend / divisor : -1;
-            } else {
-                t->cpu_usage = -1;
-            }
+    if (now >= newer.when + 3 * 1000) {
+        older = newer;
+        newer.when = now;
+        newer.cpu = (timeval_to_msec(&recent_rusage.ru_utime) +
+                     timeval_to_msec(&recent_rusage.ru_stime));
+
+        if (older.when != LLONG_MIN && newer.cpu > older.cpu) {
+            unsigned int dividend = newer.cpu - older.cpu;
+            unsigned int divisor = (newer.when - older.when) / 100;
+            cpu_usage = divisor > 0 ? dividend / divisor : -1;
+        } else {
+            cpu_usage = -1;
         }
     }
 }
@@ -601,7 +603,90 @@ refresh_rusage(void)
 int
 get_cpu_usage(void)
 {
-    return get_cpu_tracker()->cpu_usage;
+    return cpu_usage;
+}
+
+static uint32_t
+hash_trace(struct trace *trace)
+{
+    return hash_bytes(trace->backtrace,
+                      trace->n_frames * sizeof *trace->backtrace, 0);
+}
+
+static struct trace *
+trace_map_lookup(struct hmap *trace_map, struct trace *key)
+{
+    struct trace *value;
+
+    HMAP_FOR_EACH_WITH_HASH (value, node, hash_trace(key), trace_map) {
+        if (key->n_frames == value->n_frames
+            && !memcmp(key->backtrace, value->backtrace,
+                       key->n_frames * sizeof *key->backtrace)) {
+            return value;
+        }
+    }
+    return NULL;
+}
+
+/*  Appends a string to 'ds' representing backtraces recorded at regular
+ *  intervals in the recent past.  This information can be used to get a sense
+ *  of what the process has been spending the majority of time doing.  Will
+ *  ommit any backtraces which have not occurred at least 'min_count' times. */
+void
+format_backtraces(struct ds *ds, size_t min_count)
+{
+    time_init();
+
+    if (USE_BACKTRACE && CACHE_TIME) {
+        struct hmap trace_map = HMAP_INITIALIZER(&trace_map);
+        struct trace *trace, *next;
+        sigset_t oldsigs;
+        size_t i;
+
+        block_sigalrm(&oldsigs);
+
+        for (i = 0; i < MAX_TRACES; i++) {
+            struct trace *trace = &traces[i];
+            struct trace *map_trace;
+
+            if (!trace->n_frames) {
+                continue;
+            }
+
+            map_trace = trace_map_lookup(&trace_map, trace);
+            if (map_trace) {
+                map_trace->count++;
+            } else {
+                hmap_insert(&trace_map, &trace->node, hash_trace(trace));
+                trace->count = 1;
+            }
+        }
+
+        HMAP_FOR_EACH_SAFE (trace, next, node, &trace_map) {
+            char **frame_strs;
+            size_t j;
+
+            hmap_remove(&trace_map, &trace->node);
+
+            if (trace->count < min_count) {
+                continue;
+            }
+
+            frame_strs = backtrace_symbols(trace->backtrace, trace->n_frames);
+
+            ds_put_format(ds, "Count %zu\n", trace->count);
+            for (j = 0; j < trace->n_frames; j++) {
+                ds_put_format(ds, "%s\n", frame_strs[j]);
+            }
+            ds_put_cstr(ds, "\n");
+
+            free(frame_strs);
+        }
+        hmap_destroy(&trace_map);
+
+        ds_chomp(ds, '\n');
+        unblock_sigalrm(&oldsigs);
+    }
 }
 
 /* Unixctl interface. */
@@ -613,12 +698,7 @@ timeval_stop_cb(struct unixctl_conn *conn,
                  int argc OVS_UNUSED, const char *argv[] OVS_UNUSED,
                  void *aux OVS_UNUSED)
 {
-    ovs_mutex_lock(&monotonic_clock.mutex);
-    atomic_store(&monotonic_clock.slow_path, true);
-    monotonic_clock.stopped = true;
-    xclock_gettime(monotonic_clock.id, &monotonic_clock.cache);
-    ovs_mutex_unlock(&monotonic_clock.mutex);
-
+    time_stopped = true;
     unixctl_command_reply(conn, NULL);
 }
 
@@ -642,72 +722,28 @@ timeval_warp_cb(struct unixctl_conn *conn,
 
     ts.tv_sec = msecs / 1000;
     ts.tv_nsec = (msecs % 1000) * 1000 * 1000;
-
-    ovs_mutex_lock(&monotonic_clock.mutex);
-    atomic_store(&monotonic_clock.slow_path, true);
-    timespec_add(&monotonic_clock.warp, &monotonic_clock.warp, &ts);
-    ovs_mutex_unlock(&monotonic_clock.mutex);
-    seq_change(timewarp_seq);
-    /* give threads (eg. monitor) some chances to run */
-#ifndef _WIN32
-    poll(NULL, 0, 10);
-#else
-    Sleep(10);
-#endif
+    timespec_add(&warp_offset, &warp_offset, &ts);
+    timespec_add(&monotonic_time, &monotonic_time, &ts);
     unixctl_command_reply(conn, "warped");
+}
+
+static void
+backtrace_cb(struct unixctl_conn *conn,
+             int argc OVS_UNUSED, const char *argv[] OVS_UNUSED,
+             void *aux OVS_UNUSED)
+{
+    struct ds ds = DS_EMPTY_INITIALIZER;
+
+    ovs_assert(USE_BACKTRACE && CACHE_TIME);
+    format_backtraces(&ds, 0);
+    unixctl_command_reply(conn, ds_cstr(&ds));
+    ds_destroy(&ds);
 }
 
 void
 timeval_dummy_register(void)
 {
-    timewarp_enabled = true;
     unixctl_command_register("time/stop", "", 0, 0, timeval_stop_cb, NULL);
     unixctl_command_register("time/warp", "MSECS", 1, 1,
                              timeval_warp_cb, NULL);
-}
-
-
-
-/* strftime() with an extension for high-resolution timestamps.  Any '#'s in
- * 'format' will be replaced by subseconds, e.g. use "%S.###" to obtain results
- * like "01.123".  */
-size_t
-strftime_msec(char *s, size_t max, const char *format,
-              const struct tm_msec *tm)
-{
-    size_t n;
-
-    n = strftime(s, max, format, &tm->tm);
-    if (n) {
-        char decimals[4];
-        char *p;
-
-        sprintf(decimals, "%03d", tm->msec);
-        for (p = strchr(s, '#'); p; p = strchr(p, '#')) {
-            char *d = decimals;
-            while (*p == '#')  {
-                *p++ = *d ? *d++ : '0';
-            }
-        }
-    }
-
-    return n;
-}
-
-struct tm_msec *
-localtime_msec(long long int now, struct tm_msec *result)
-{
-  time_t now_sec = now / 1000;
-  localtime_r(&now_sec, &result->tm);
-  result->msec = now % 1000;
-  return result;
-}
-
-struct tm_msec *
-gmtime_msec(long long int now, struct tm_msec *result)
-{
-  time_t now_sec = now / 1000;
-  gmtime_r(&now_sec, &result->tm);
-  result->msec = now % 1000;
-  return result;
 }

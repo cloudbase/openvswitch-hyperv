@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2011, 2012, 2013, 2014 Nicira, Inc.
+ * Copyright (c) 2010, 2011, 2012 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,14 +20,12 @@
 #include <stdint.h>
 #include <sys/types.h>
 #include <netinet/in.h>
-#include "compiler.h"
 #include "flow.h"
 #include "ofp-errors.h"
 #include "openvswitch/types.h"
 
 struct ds;
 struct match;
-struct mf_field;
 struct mf_subfield;
 struct ofpact_reg_move;
 struct ofpact_reg_load;
@@ -55,14 +53,12 @@ int nx_put_match(struct ofpbuf *, const struct match *,
 int oxm_put_match(struct ofpbuf *, const struct match *);
 
 char *nx_match_to_string(const uint8_t *, unsigned int match_len);
-char *oxm_match_to_string(const struct ofpbuf *, unsigned int match_len);
+char *oxm_match_to_string(const uint8_t *, unsigned int match_len);
 int nx_match_from_string(const char *, struct ofpbuf *);
 int oxm_match_from_string(const char *, struct ofpbuf *);
 
-char *nxm_parse_reg_move(struct ofpact_reg_move *, const char *)
-    WARN_UNUSED_RESULT;
-char *nxm_parse_reg_load(struct ofpact_reg_load *, const char *)
-    WARN_UNUSED_RESULT;
+void nxm_parse_reg_move(struct ofpact_reg_move *, const char *);
+void nxm_parse_reg_load(struct ofpact_reg_load *, const char *);
 
 void nxm_format_reg_move(const struct ofpact_reg_move *, struct ds *);
 void nxm_format_reg_load(const struct ofpact_reg_load *, struct ds *);
@@ -71,6 +67,8 @@ enum ofperr nxm_reg_move_from_openflow(const struct nx_action_reg_move *,
                                        struct ofpbuf *ofpacts);
 enum ofperr nxm_reg_load_from_openflow(const struct nx_action_reg_load *,
                                        struct ofpbuf *ofpacts);
+enum ofperr nxm_reg_load_from_openflow12_set_field(
+    const struct ofp12_action_set_field * oasf, struct ofpbuf *ofpacts);
 
 enum ofperr nxm_reg_move_check(const struct ofpact_reg_move *,
                                const struct flow *);
@@ -84,13 +82,11 @@ void nxm_reg_load_to_nxast(const struct ofpact_reg_load *,
 
 void nxm_execute_reg_move(const struct ofpact_reg_move *, struct flow *,
                           struct flow_wildcards *);
-void nxm_execute_reg_load(const struct ofpact_reg_load *, struct flow *,
-                          struct flow_wildcards *);
+void nxm_execute_reg_load(const struct ofpact_reg_load *, struct flow *);
 void nxm_reg_load(const struct mf_subfield *, uint64_t src_data,
                   struct flow *, struct flow_wildcards *);
 
-char *nxm_parse_stack_action(struct ofpact_stack *, const char *)
-    WARN_UNUSED_RESULT;
+void nxm_parse_stack_action(struct ofpact_stack *, const char *);
 
 void nxm_format_stack_push(const struct ofpact_stack *, struct ds *);
 void nxm_format_stack_pop(const struct ofpact_stack *, struct ds *);

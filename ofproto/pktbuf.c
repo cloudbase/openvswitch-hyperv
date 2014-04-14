@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008, 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
+ * Copyright (c) 2008, 2009, 2010, 2011, 2012 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -51,7 +51,7 @@ struct packet {
     struct ofpbuf *buffer;
     uint32_t cookie;
     long long int timeout;
-    ofp_port_t in_port;
+    uint16_t in_port;
 };
 
 struct pktbuf {
@@ -104,7 +104,7 @@ make_id(unsigned int buffer_idx, unsigned int cookie)
  * The caller retains ownership of 'buffer'. */
 uint32_t
 pktbuf_save(struct pktbuf *pb, const void *buffer, size_t buffer_size,
-            ofp_port_t in_port)
+            uint16_t in_port)
 {
     struct packet *p = &pb->packets[pb->buffer_idx];
     pb->buffer_idx = (pb->buffer_idx + 1) & PKTBUF_MASK;
@@ -119,9 +119,9 @@ pktbuf_save(struct pktbuf *pb, const void *buffer, size_t buffer_size,
     if (++p->cookie >= COOKIE_MAX) {
         p->cookie = 0;
     }
+    p->buffer = ofpbuf_clone_data_with_headroom(buffer, buffer_size,
+                                                sizeof(struct ofp10_packet_in));
 
-    /* Use 2 bytes of headroom to 32-bit align the L3 header. */
-    p->buffer = ofpbuf_clone_data_with_headroom(buffer, buffer_size, 2);
 
     p->timeout = time_msec() + OVERWRITE_MSECS;
     p->in_port = in_port;
@@ -158,19 +158,20 @@ pktbuf_get_null(void)
  * 0 if successful, otherwise an OpenFlow error code.
  *
  * On success, ordinarily stores the buffered packet in '*bufferp' and the
- * OpenFlow port number on which the packet was received in '*in_port'.  The
+ * datapath port number on which the packet was received in '*in_port'.  The
  * caller becomes responsible for freeing the buffer.  However, if 'id'
  * identifies a "null" packet buffer (created with pktbuf_get_null()), stores
- * NULL in '*bufferp' and OFPP_NONE in '*in_port'.
+ * NULL in '*bufferp' and UINT16_max in '*in_port'.
  *
  * 'in_port' may be NULL if the input port is not of interest.
  *
- * The L3 header of a returned packet will be 32-bit aligned.
+ * A returned packet will have at least sizeof(struct ofp10_packet_in) bytes of
+ * headroom.
  *
  * On failure, stores NULL in in '*bufferp' and UINT16_MAX in '*in_port'. */
 enum ofperr
 pktbuf_retrieve(struct pktbuf *pb, uint32_t id, struct ofpbuf **bufferp,
-                ofp_port_t *in_port)
+                uint16_t *in_port)
 {
     static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 20);
     struct packet *p;
@@ -217,7 +218,7 @@ pktbuf_retrieve(struct pktbuf *pb, uint32_t id, struct ofpbuf **bufferp,
 error:
     *bufferp = NULL;
     if (in_port) {
-        *in_port = OFPP_NONE;
+        *in_port = UINT16_MAX;
     }
     return error;
 }

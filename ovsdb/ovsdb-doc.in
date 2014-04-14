@@ -1,4 +1,4 @@
-#! /usr/bin/python
+#! @PYTHON@
 
 from datetime import date
 import getopt
@@ -265,7 +265,7 @@ def docsToNroff(schemaFile, xmlFile, erFile, title=None):
     # Putting '\" p as the first line tells "man" that the manpage
     # needs to be preprocessed by "pic".
     s = r''''\" p
-.TH 1.11.1 5 "%s" "Open vSwitch" "Open vSwitch Manual"
+.TH @VERSION@ 5 "%s" "Open vSwitch" "Open vSwitch Manual"
 .\" -*- nroff -*-
 .de TQ
 .  br
@@ -382,7 +382,7 @@ if __name__ == "__main__":
             elif key in ['-h', '--help']:
                 usage()
             elif key in ['-V', '--version']:
-                print "ovsdb-doc (Open vSwitch) 1.11.1"
+                print "ovsdb-doc (Open vSwitch) @VERSION@"
             else:
                 sys.exit(0)
 

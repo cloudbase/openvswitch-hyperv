@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012, 2013 Nicira, Inc.
+ * Copyright (c) 2011, 2012 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -221,13 +221,21 @@ route_table_wait(void)
 static int
 route_table_reset(void)
 {
+    int error;
     struct nl_dump dump;
     struct rtgenmsg *rtmsg;
-    uint64_t reply_stub[NL_DUMP_BUFSIZE / 8];
-    struct ofpbuf request, reply, buf;
+    struct ofpbuf request, reply;
+    static struct nl_sock *rtnl_sock;
 
     route_map_clear();
     route_table_valid = true;
+
+    error = nl_sock_create(NETLINK_ROUTE, &rtnl_sock);
+    if (error) {
+        VLOG_WARN_RL(&rl, "failed to reset routing table, "
+                     "cannot create RTNETLINK_ROUTE socket");
+        return error;
+    }
 
     ofpbuf_init(&request, 0);
 
@@ -236,20 +244,21 @@ route_table_reset(void)
     rtmsg = ofpbuf_put_zeros(&request, sizeof *rtmsg);
     rtmsg->rtgen_family = AF_INET;
 
-    nl_dump_start(&dump, NETLINK_ROUTE, &request);
+    nl_dump_start(&dump, rtnl_sock, &request);
     ofpbuf_uninit(&request);
 
-    ofpbuf_use_stub(&buf, reply_stub, sizeof reply_stub);
-    while (nl_dump_next(&dump, &reply, &buf)) {
+    while (nl_dump_next(&dump, &reply)) {
         struct route_table_msg msg;
 
         if (route_table_parse(&reply, &msg)) {
             route_table_handle_msg(&msg);
         }
     }
-    ofpbuf_uninit(&buf);
 
-    return nl_dump_done(&dump);
+    error = nl_dump_done(&dump);
+    nl_sock_destroy(rtnl_sock);
+
+    return error;
 }
 
 
@@ -263,7 +272,7 @@ route_table_parse(struct ofpbuf *buf, struct route_table_msg *change)
         [RTA_OIF] = { .type = NL_A_U32, .optional = false },
     };
 
-    struct nlattr *attrs[ARRAY_SIZE(policy)];
+    static struct nlattr *attrs[ARRAY_SIZE(policy)];
 
     parsed = nl_policy_parse(buf, NLMSG_HDRLEN + sizeof(struct rtmsg),
                              policy, attrs, ARRAY_SIZE(policy));
@@ -272,8 +281,8 @@ route_table_parse(struct ofpbuf *buf, struct route_table_msg *change)
         const struct rtmsg *rtm;
         const struct nlmsghdr *nlmsg;
 
-        nlmsg = ofpbuf_data(buf);
-        rtm = ofpbuf_at(buf, NLMSG_HDRLEN, sizeof *rtm);
+        nlmsg = buf->data;
+        rtm = (const struct rtmsg *) ((const char *) buf->data + NLMSG_HDRLEN);
 
         if (rtm->rtm_family != AF_INET) {
             VLOG_DBG_RL(&rl, "received non AF_INET rtnetlink route message");
@@ -408,24 +417,29 @@ name_table_uninit(void)
 static int
 name_table_reset(void)
 {
+    int error;
     struct nl_dump dump;
     struct rtgenmsg *rtmsg;
-    uint64_t reply_stub[NL_DUMP_BUFSIZE / 8];
-    struct ofpbuf request, reply, buf;
+    struct ofpbuf request, reply;
+    static struct nl_sock *rtnl_sock;
 
     name_table_valid = true;
     name_map_clear();
+    error = nl_sock_create(NETLINK_ROUTE, &rtnl_sock);
+    if (error) {
+        VLOG_WARN_RL(&rl, "failed to create NETLINK_ROUTE socket");
+        return error;
+    }
 
     ofpbuf_init(&request, 0);
     nl_msg_put_nlmsghdr(&request, sizeof *rtmsg, RTM_GETLINK, NLM_F_REQUEST);
     rtmsg = ofpbuf_put_zeros(&request, sizeof *rtmsg);
     rtmsg->rtgen_family = AF_INET;
 
-    nl_dump_start(&dump, NETLINK_ROUTE, &request);
+    nl_dump_start(&dump, rtnl_sock, &request);
     ofpbuf_uninit(&request);
 
-    ofpbuf_use_stub(&buf, reply_stub, sizeof reply_stub);
-    while (nl_dump_next(&dump, &reply, &buf)) {
+    while (nl_dump_next(&dump, &reply)) {
         struct rtnetlink_link_change change;
 
         if (rtnetlink_link_parse(&reply, &change)
@@ -439,7 +453,7 @@ name_table_reset(void)
             hmap_insert(&name_map, &nn->node, hash_int(nn->ifi_index, 0));
         }
     }
-    ofpbuf_uninit(&buf);
+    nl_sock_destroy(rtnl_sock);
     return nl_dump_done(&dump);
 }
 

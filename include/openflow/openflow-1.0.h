@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008, 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
+ * Copyright (c) 2008, 2009, 2010, 2011, 2012 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,22 +28,28 @@
  * 0xff00...0xfff7  "reserved" but not assigned a meaning by OpenFlow 1.0
  * 0xfff8...0xffff  "reserved" OFPP_* ports with assigned meanings
  */
+enum ofp_port {
+    /* Ranges. */
+    OFPP_MAX        = 0xff00,   /* Maximum number of physical switch ports. */
+    OFPP_FIRST_RESV = 0xfff8,   /* First assigned reserved port number. */
+    OFPP_LAST_RESV  = 0xffff,   /* Last assigned reserved port number. */
 
-/* Ranges. */
-#define OFPP_MAX        OFP_PORT_C(0xff00) /* Max # of switch ports. */
-#define OFPP_FIRST_RESV OFP_PORT_C(0xfff8) /* First assigned reserved port. */
-#define OFPP_LAST_RESV  OFP_PORT_C(0xffff) /* Last assigned reserved port. */
-
-/* Reserved output "ports". */
-#define OFPP_IN_PORT    OFP_PORT_C(0xfff8) /* Where the packet came in. */
-#define OFPP_TABLE      OFP_PORT_C(0xfff9) /* Perform actions in flow table. */
-#define OFPP_NORMAL     OFP_PORT_C(0xfffa) /* Process with normal L2/L3. */
-#define OFPP_FLOOD      OFP_PORT_C(0xfffb) /* All ports except input port and
-                                            * ports disabled by STP. */
-#define OFPP_ALL        OFP_PORT_C(0xfffc) /* All ports except input port. */
-#define OFPP_CONTROLLER OFP_PORT_C(0xfffd) /* Send to controller. */
-#define OFPP_LOCAL      OFP_PORT_C(0xfffe) /* Local openflow "port". */
-#define OFPP_NONE       OFP_PORT_C(0xffff) /* Not associated with any port. */
+    /* Reserved output "ports". */
+    OFPP_IN_PORT    = 0xfff8,  /* Send the packet out the input port.  This
+                                  virtual port must be explicitly used
+                                  in order to send back out of the input
+                                  port. */
+    OFPP_TABLE      = 0xfff9,  /* Perform actions in flow table.
+                                  NB: This can only be the destination
+                                  port for packet-out messages. */
+    OFPP_NORMAL     = 0xfffa,  /* Process with normal L2/L3 switching. */
+    OFPP_FLOOD      = 0xfffb,  /* All physical ports except input port and
+                                  those disabled by STP. */
+    OFPP_ALL        = 0xfffc,  /* All physical ports except input port. */
+    OFPP_CONTROLLER = 0xfffd,  /* Send to controller. */
+    OFPP_LOCAL      = 0xfffe,  /* Local openflow "port". */
+    OFPP_NONE       = 0xffff   /* Not associated with a physical port. */
+};
 
 /* OpenFlow 1.0 specific capabilities supported by the datapath (struct
  * ofp_switch_features, member capabilities). */
@@ -128,15 +134,6 @@ struct ofp10_port_mod {
 };
 OFP_ASSERT(sizeof(struct ofp10_port_mod) == 24);
 
-struct ofp10_packet_queue {
-    ovs_be32 queue_id;          /* id for the specific queue. */
-    ovs_be16 len;               /* Length in bytes of this queue desc. */
-    uint8_t pad[2];             /* 64-bit alignment. */
-    /* Followed by any number of queue properties expressed using
-     * ofp_queue_prop_header, to fill out a total of 'len' bytes. */
-};
-OFP_ASSERT(sizeof(struct ofp10_packet_queue) == 8);
-
 /* Query for port queue configuration. */
 struct ofp10_queue_get_config_request {
     ovs_be16 port;          /* Port to be queried. Should refer
@@ -209,6 +206,19 @@ struct ofp10_action_enqueue {
     ovs_be32 queue_id;        /* Where to enqueue the packets. */
 };
 OFP_ASSERT(sizeof(struct ofp10_action_enqueue) == 16);
+
+union ofp_action {
+    ovs_be16 type;
+    struct ofp_action_header header;
+    struct ofp_action_vendor_header vendor;
+    struct ofp10_action_output output10;
+    struct ofp_action_vlan_vid vlan_vid;
+    struct ofp_action_vlan_pcp vlan_pcp;
+    struct ofp_action_nw_addr nw_addr;
+    struct ofp_action_nw_tos nw_tos;
+    struct ofp_action_tp_port tp_port;
+};
+OFP_ASSERT(sizeof(union ofp_action) == 8);
 
 /* Send packet (controller -> datapath). */
 struct ofp10_packet_out {
@@ -291,7 +301,7 @@ struct ofp10_match {
 OFP_ASSERT(sizeof(struct ofp10_match) == 40);
 
 enum ofp10_flow_mod_flags {
-    OFPFF10_EMERG       = 1 << 2 /* Part of "emergency flow cache". */
+    OFPFF10_EMERG       = 1 << 2   /* Ramark this is for emergency. */
 };
 
 /* Flow setup and teardown (controller -> datapath). */

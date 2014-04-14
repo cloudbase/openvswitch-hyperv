@@ -60,8 +60,7 @@ struct stp *stp_create(const char *name, stp_identifier bridge_id,
                        void (*send_bpdu)(struct ofpbuf *bpdu, int port_no,
                                          void *aux),
                        void *aux);
-struct stp *stp_ref(const struct stp *);
-void stp_unref(struct stp *);
+void stp_destroy(struct stp *);
 void stp_tick(struct stp *, int ms);
 void stp_set_bridge_id(struct stp *, stp_identifier bridge_id);
 void stp_set_bridge_priority(struct stp *, uint16_t new_priority);
@@ -120,7 +119,6 @@ enum stp_state {
 const char *stp_state_name(enum stp_state);
 bool stp_forward_in_state(enum stp_state);
 bool stp_learn_in_state(enum stp_state);
-bool stp_listen_in_state(enum stp_state);
 
 /* Role of an STP port. */
 enum stp_role {

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008, 2009, 2010, 2012, 2013 Nicira, Inc.
+ * Copyright (c) 2008, 2009, 2010, 2012 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,7 +19,6 @@
 
 #include <stdbool.h>
 #include <stdlib.h>
-#include "ovs-atomic.h"
 #include "util.h"
 
 #ifdef  __cplusplus
@@ -66,8 +65,7 @@ struct hmap {
 };
 
 /* Initializer for an empty hash map. */
-#define HMAP_INITIALIZER(HMAP) \
-    { (struct hmap_node **const) &(HMAP)->one, NULL, 0, 0 }
+#define HMAP_INITIALIZER(HMAP) { &(HMAP)->one, NULL, 0, 0 }
 
 /* Initialization. */
 void hmap_init(struct hmap *);
@@ -79,24 +77,14 @@ static inline size_t hmap_count(const struct hmap *);
 static inline bool hmap_is_empty(const struct hmap *);
 
 /* Adjusting capacity. */
-void hmap_expand_at(struct hmap *, const char *where);
-#define hmap_expand(HMAP) hmap_expand_at(HMAP, SOURCE_LOCATOR)
-
-void hmap_shrink_at(struct hmap *, const char *where);
-#define hmap_shrink(HMAP) hmap_shrink_at(HMAP, SOURCE_LOCATOR)
-
-void hmap_reserve_at(struct hmap *, size_t capacity, const char *where);
-#define hmap_reserve(HMAP, CAPACITY) \
-    hmap_reserve_at(HMAP, CAPACITY, SOURCE_LOCATOR)
+void hmap_expand(struct hmap *);
+void hmap_shrink(struct hmap *);
+void hmap_reserve(struct hmap *, size_t capacity);
 
 /* Insertion and deletion. */
-static inline void hmap_insert_at(struct hmap *, struct hmap_node *,
-                                  size_t hash, const char *where);
-#define hmap_insert(HMAP, NODE, HASH) \
-    hmap_insert_at(HMAP, NODE, HASH, SOURCE_LOCATOR)
-
 static inline void hmap_insert_fast(struct hmap *,
                                     struct hmap_node *, size_t hash);
+static inline void hmap_insert(struct hmap *, struct hmap_node *, size_t hash);
 static inline void hmap_remove(struct hmap *, struct hmap_node *);
 
 void hmap_node_moved(struct hmap *, struct hmap_node *, struct hmap_node *);
@@ -127,12 +115,12 @@ struct hmap_node *hmap_random_node(const struct hmap *);
  */
 #define HMAP_FOR_EACH_WITH_HASH(NODE, MEMBER, HASH, HMAP)               \
     for (ASSIGN_CONTAINER(NODE, hmap_first_with_hash(HMAP, HASH), MEMBER); \
-         NODE != OBJECT_CONTAINING(NULL, NODE, MEMBER);                  \
+         &(NODE)->MEMBER != NULL;                                       \
          ASSIGN_CONTAINER(NODE, hmap_next_with_hash(&(NODE)->MEMBER),   \
                           MEMBER))
 #define HMAP_FOR_EACH_IN_BUCKET(NODE, MEMBER, HASH, HMAP)               \
     for (ASSIGN_CONTAINER(NODE, hmap_first_in_bucket(HMAP, HASH), MEMBER); \
-         NODE != OBJECT_CONTAINING(NULL, NODE, MEMBER);                  \
+         &(NODE)->MEMBER != NULL;                                       \
          ASSIGN_CONTAINER(NODE, hmap_next_in_bucket(&(NODE)->MEMBER), MEMBER))
 
 static inline struct hmap_node *hmap_first_with_hash(const struct hmap *,
@@ -149,22 +137,22 @@ bool hmap_contains(const struct hmap *, const struct hmap_node *);
 /* Iterates through every node in HMAP. */
 #define HMAP_FOR_EACH(NODE, MEMBER, HMAP)                               \
     for (ASSIGN_CONTAINER(NODE, hmap_first(HMAP), MEMBER);              \
-         NODE != OBJECT_CONTAINING(NULL, NODE, MEMBER);                  \
+         &(NODE)->MEMBER != NULL;                                       \
          ASSIGN_CONTAINER(NODE, hmap_next(HMAP, &(NODE)->MEMBER), MEMBER))
 
 /* Safe when NODE may be freed (not needed when NODE may be removed from the
  * hash map but its members remain accessible and intact). */
 #define HMAP_FOR_EACH_SAFE(NODE, NEXT, MEMBER, HMAP)                    \
     for (ASSIGN_CONTAINER(NODE, hmap_first(HMAP), MEMBER);              \
-         (NODE != OBJECT_CONTAINING(NULL, NODE, MEMBER)                  \
-          ? ASSIGN_CONTAINER(NEXT, hmap_next(HMAP, &(NODE)->MEMBER), MEMBER), 1 \
+         (&(NODE)->MEMBER != NULL                                       \
+          ? ASSIGN_CONTAINER(NEXT, hmap_next(HMAP, &(NODE)->MEMBER), MEMBER) \
           : 0);                                                         \
          (NODE) = (NEXT))
 
 /* Continues an iteration from just after NODE. */
 #define HMAP_FOR_EACH_CONTINUE(NODE, MEMBER, HMAP)                      \
     for (ASSIGN_CONTAINER(NODE, hmap_next(HMAP, &(NODE)->MEMBER), MEMBER); \
-         NODE != OBJECT_CONTAINING(NULL, NODE, MEMBER);                  \
+         &(NODE)->MEMBER != NULL;                                       \
          ASSIGN_CONTAINER(NODE, hmap_next(HMAP, &(NODE)->MEMBER), MEMBER))
 
 static inline struct hmap_node *hmap_first(const struct hmap *);
@@ -190,9 +178,7 @@ hmap_capacity(const struct hmap *hmap)
 }
 
 /* Returns true if 'hmap' currently contains no nodes,
- * false otherwise.
- * Note: While hmap in general is not thread-safe without additional locking,
- * hmap_is_empty() is. */
+ * false otherwise. */
 static inline bool
 hmap_is_empty(const struct hmap *hmap)
 {
@@ -212,18 +198,13 @@ hmap_insert_fast(struct hmap *hmap, struct hmap_node *node, size_t hash)
 }
 
 /* Inserts 'node', with the given 'hash', into 'hmap', and expands 'hmap' if
- * necessary to optimize search performance.
- *
- * ('where' is used in debug logging.  Commonly one would use hmap_insert() to
- * automatically provide the caller's source file and line number for
- * 'where'.) */
+ * necessary to optimize search performance. */
 static inline void
-hmap_insert_at(struct hmap *hmap, struct hmap_node *node, size_t hash,
-               const char *where)
+hmap_insert(struct hmap *hmap, struct hmap_node *node, size_t hash)
 {
     hmap_insert_fast(hmap, node, hash);
     if (hmap->n / 2 > hmap->mask) {
-        hmap_expand_at(hmap, where);
+        hmap_expand(hmap);
     }
 }
 

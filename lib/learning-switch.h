@@ -20,7 +20,6 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
-#include "ofp-util.h"
 
 struct ofpbuf;
 struct rconn;
@@ -51,7 +50,6 @@ struct lswitch_config {
      * to set up the flow table. */
     const struct ofputil_flow_mod *default_flows;
     size_t n_default_flows;
-    enum ofputil_protocol usable_protocols;
 
     /* The OpenFlow queue to use by default.  Use UINT32_MAX to avoid
      * specifying a particular queue. */

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008, 2009, 2010, 2011, 2013 Nicira, Inc.
+ * Copyright (c) 2008, 2009, 2010, 2011 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -40,7 +40,6 @@ void list_push_front(struct list *, struct list *);
 void list_push_back(struct list *, struct list *);
 void list_replace(struct list *, const struct list *);
 void list_moved(struct list *);
-void list_move(struct list *dst, struct list *src);
 
 /* List removal. */
 struct list *list_remove(struct list *);
@@ -73,11 +72,11 @@ bool list_is_short(const struct list *);
     for (ASSIGN_CONTAINER(ITER, (ITER)->MEMBER.prev, MEMBER);           \
          &(ITER)->MEMBER != (LIST);                                     \
          ASSIGN_CONTAINER(ITER, (ITER)->MEMBER.prev, MEMBER))
-#define LIST_FOR_EACH_SAFE(ITER, NEXT, MEMBER, LIST)               \
-    for (ASSIGN_CONTAINER(ITER, (LIST)->next, MEMBER);             \
-         (&(ITER)->MEMBER != (LIST)                                \
-          ? ASSIGN_CONTAINER(NEXT, (ITER)->MEMBER.next, MEMBER), 1 \
-          : 0);                                                    \
+#define LIST_FOR_EACH_SAFE(ITER, NEXT, MEMBER, LIST)            \
+    for (ASSIGN_CONTAINER(ITER, (LIST)->next, MEMBER);          \
+         (&(ITER)->MEMBER != (LIST)                             \
+          ? ASSIGN_CONTAINER(NEXT, (ITER)->MEMBER.next, MEMBER) \
+          : 0);                                                 \
          (ITER) = (NEXT))
 
 #endif /* list.h */

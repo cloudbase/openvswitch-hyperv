@@ -65,8 +65,7 @@ struct cfm_settings {
 
 void cfm_init(void);
 struct cfm *cfm_create(const struct netdev *);
-struct cfm *cfm_ref(const struct cfm *);
-void cfm_unref(struct cfm *);
+void cfm_destroy(struct cfm *);
 void cfm_run(struct cfm *);
 bool cfm_should_send_ccm(struct cfm *);
 void cfm_compose_ccm(struct cfm *, struct ofpbuf *packet, uint8_t eth_src[6]);
@@ -77,11 +76,10 @@ bool cfm_should_process_flow(const struct cfm *cfm, const struct flow *,
                              struct flow_wildcards *);
 void cfm_process_heartbeat(struct cfm *, const struct ofpbuf *packet);
 int cfm_get_fault(const struct cfm *);
-uint64_t cfm_get_flap_count(const struct cfm *);
 int cfm_get_health(const struct cfm *);
 int cfm_get_opup(const struct cfm *);
-void cfm_get_remote_mpids(const struct cfm *, uint64_t **rmps, size_t *n_rmps);
+void cfm_get_remote_mpids(const struct cfm *, const uint64_t **rmps,
+                          size_t *n_rmps);
 const char *cfm_fault_reason_to_str(int fault);
 
-long long int cfm_wake_time(struct cfm*);
 #endif /* cfm.h */

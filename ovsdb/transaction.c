@@ -1,4 +1,4 @@
-/* Copyright (c) 2009, 2010, 2011, 2012, 2013, 2014 Nicira, Inc.
+/* Copyright (c) 2009, 2010, 2011, 2012 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -295,7 +295,7 @@ check_ref_count(struct ovsdb_txn *txn OVS_UNUSED, struct ovsdb_txn_row *r)
     } else {
         return ovsdb_error("referential integrity violation",
                            "cannot delete %s row "UUID_FMT" because "
-                           "of %"PRIuSIZE" remaining reference(s)",
+                           "of %zu remaining reference(s)",
                            r->table->schema->name, UUID_ARGS(&r->uuid),
                            r->n_refs);
     }
@@ -533,7 +533,6 @@ assess_weak_refs(struct ovsdb_txn *txn, struct ovsdb_txn_row *txn_row)
         }
 
         if (datum->n != orig_n) {
-            bitmap_set1(txn_row->changed, OVSDB_COL_VERSION);
             bitmap_set1(txn_row->changed, column->index);
             ovsdb_datum_sort_assert(datum, column->type.key.type);
             if (datum->n < column->type.n_min) {
@@ -615,7 +614,7 @@ check_max_rows(struct ovsdb_txn *txn)
         if (n_rows > max_rows) {
             return ovsdb_error("constraint violation",
                                "transaction causes \"%s\" table to contain "
-                               "%"PRIuSIZE" rows, greater than the schema-defined "
+                               "%zu rows, greater than the schema-defined "
                                "limit of %u row(s)",
                                t->table->schema->name, n_rows, max_rows);
         }
@@ -654,7 +653,7 @@ duplicate_index_row__(const struct ovsdb_column_set *index,
     ds_put_format(out, "%s row, with UUID "UUID_FMT", ",
                   title, UUID_ARGS(ovsdb_row_get_uuid(row)));
     if (!row->txn_row
-        || bitmap_scan(row->txn_row->changed, 1, 0, n_columns) == n_columns) {
+        || bitmap_scan(row->txn_row->changed, 0, n_columns) == n_columns) {
         ds_put_cstr(out, "existed in the database before this "
                     "transaction and was not modified by the transaction.");
     } else if (!row->txn_row->old) {

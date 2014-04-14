@@ -26,10 +26,8 @@ struct ofproto_ipfix_bridge_exporter_options;
 struct ofproto_ipfix_flow_exporter_options;
 
 struct dpif_ipfix *dpif_ipfix_create(void);
-struct dpif_ipfix *dpif_ipfix_ref(const struct dpif_ipfix *);
-void dpif_ipfix_unref(struct dpif_ipfix *);
-
 uint32_t dpif_ipfix_get_bridge_exporter_probability(const struct dpif_ipfix *);
+void dpif_ipfix_destroy(struct dpif_ipfix *);
 void dpif_ipfix_set_options(
     struct dpif_ipfix *,
     const struct ofproto_ipfix_bridge_exporter_options *,
@@ -40,8 +38,5 @@ void dpif_ipfix_bridge_sample(struct dpif_ipfix *, struct ofpbuf *,
 void dpif_ipfix_flow_sample(struct dpif_ipfix *, struct ofpbuf *,
                             const struct flow *, uint32_t, uint16_t, uint32_t,
                             uint32_t);
-
-void dpif_ipfix_run(struct dpif_ipfix *);
-void dpif_ipfix_wait(struct dpif_ipfix *);
 
 #endif /* ofproto/ofproto-dpif-ipfix.h */

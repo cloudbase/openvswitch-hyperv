@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
+ * Copyright (c) 2009, 2010, 2011, 2012 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,33 +29,27 @@
 VLOG_DEFINE_THIS_MODULE(coverage);
 
 /* The coverage counters. */
-static struct coverage_counter **coverage_counters = NULL;
-static size_t n_coverage_counters = 0;
-static size_t allocated_coverage_counters = 0;
+#if USE_LINKER_SECTIONS
+extern struct coverage_counter *__start_coverage[];
+extern struct coverage_counter *__stop_coverage[];
+#define coverage_counters __start_coverage
+#define n_coverage_counters  (__stop_coverage - __start_coverage)
+#else  /* !USE_LINKER_SECTIONS */
+#define COVERAGE_COUNTER(NAME) COVERAGE_DEFINE__(NAME);
+#include "coverage.def"
+#undef COVERAGE_COUNTER
 
-static struct ovs_mutex coverage_mutex = OVS_MUTEX_INITIALIZER;
+struct coverage_counter *coverage_counters[] = {
+#define COVERAGE_COUNTER(NAME) &counter_##NAME,
+#include "coverage.def"
+#undef COVERAGE_COUNTER
+};
+#define n_coverage_counters ARRAY_SIZE(coverage_counters)
+#endif  /* !USE_LINKER_SECTIONS */
 
-DEFINE_STATIC_PER_THREAD_DATA(long long int, coverage_clear_time, LLONG_MIN);
-static long long int coverage_run_time = LLONG_MIN;
-
-/* Index counter used to compute the moving average array's index. */
-static unsigned int idx_count = 0;
+static unsigned int epoch;
 
 static void coverage_read(struct svec *);
-static unsigned int coverage_array_sum(const unsigned int *arr,
-                                       const unsigned int len);
-
-/* Registers a coverage counter with the coverage core */
-void
-coverage_counter_register(struct coverage_counter* counter)
-{
-    if (n_coverage_counters >= allocated_coverage_counters) {
-        coverage_counters = x2nrealloc(coverage_counters,
-                                       &allocated_coverage_counters,
-                                       sizeof(struct coverage_counter*));
-    }
-    coverage_counters[n_coverage_counters++] = counter;
-}
 
 static void
 coverage_unixctl_show(struct unixctl_conn *conn, int argc OVS_UNUSED,
@@ -79,8 +73,8 @@ coverage_init(void)
                              coverage_unixctl_show, NULL);
 }
 
-/* Sorts coverage counters in descending order by total, within equal
- * totals alphabetically by name. */
+/* Sorts coverage counters in descending order by count, within equal counts
+ * alphabetically by name. */
 static int
 compare_coverage_counters(const void *a_, const void *b_)
 {
@@ -88,8 +82,8 @@ compare_coverage_counters(const void *a_, const void *b_)
     const struct coverage_counter *const *bp = b_;
     const struct coverage_counter *a = *ap;
     const struct coverage_counter *b = *bp;
-    if (a->total != b->total) {
-        return a->total < b->total ? 1 : -1;
+    if (a->count != b->count) {
+        return a->count < b->count ? 1 : -1;
     } else {
         return strcmp(a->name, b->name);
     }
@@ -102,13 +96,11 @@ coverage_hash(void)
     uint32_t hash = 0;
     int n_groups, i;
 
-    /* Sort coverage counters into groups with equal totals. */
+    /* Sort coverage counters into groups with equal counts. */
     c = xmalloc(n_coverage_counters * sizeof *c);
-    ovs_mutex_lock(&coverage_mutex);
     for (i = 0; i < n_coverage_counters; i++) {
         c[i] = coverage_counters[i];
     }
-    ovs_mutex_unlock(&coverage_mutex);
     qsort(c, n_coverage_counters, sizeof *c, compare_coverage_counters);
 
     /* Hash the names in each group along with the rank. */
@@ -116,13 +108,13 @@ coverage_hash(void)
     for (i = 0; i < n_coverage_counters; ) {
         int j;
 
-        if (!c[i]->total) {
+        if (!c[i]->count) {
             break;
         }
         n_groups++;
         hash = hash_int(i, hash);
         for (j = i; j < n_coverage_counters; j++) {
-            if (c[j]->total != c[i]->total) {
+            if (c[j]->count != c[i]->count) {
                 break;
             }
             hash = hash_string(c[j]->name, hash);
@@ -178,7 +170,7 @@ coverage_log(void)
         uint32_t hash = coverage_hash();
         if (coverage_hit(hash)) {
             VLOG_INFO("Skipping details of duplicate event coverage for "
-                      "hash=%08"PRIx32, hash);
+                      "hash=%08"PRIx32" in epoch %u", hash, epoch);
         } else {
             struct svec lines;
             const char *line;
@@ -194,12 +186,17 @@ coverage_log(void)
     }
 }
 
+static void
+coverage_read_counter(struct svec *lines, const struct coverage_counter *c)
+{
+    svec_add_nocopy(lines, xasprintf("%-24s %5u / %9llu",
+                                     c->name, c->count, c->count + c->total));
+}
+
 /* Adds coverage counter information to 'lines'. */
 static void
 coverage_read(struct svec *lines)
 {
-    struct coverage_counter **c = coverage_counters;
-    unsigned long long int *totals;
     size_t n_never_hit;
     uint32_t hash;
     size_t i;
@@ -207,149 +204,37 @@ coverage_read(struct svec *lines)
     hash = coverage_hash();
 
     n_never_hit = 0;
-    svec_add_nocopy(lines,
-                    xasprintf("Event coverage, avg rate over last: %d "
-                              "seconds, last minute, last hour,  "
-                              "hash=%08"PRIx32":",
-                              COVERAGE_RUN_INTERVAL/1000, hash));
-
-    totals = xmalloc(n_coverage_counters * sizeof *totals);
-    ovs_mutex_lock(&coverage_mutex);
+    svec_add_nocopy(lines, xasprintf("Event coverage (epoch %u/entire run), "
+                                     "hash=%08"PRIx32":", epoch, hash));
     for (i = 0; i < n_coverage_counters; i++) {
-        totals[i] = c[i]->total;
-    }
-    ovs_mutex_unlock(&coverage_mutex);
-
-    for (i = 0; i < n_coverage_counters; i++) {
-        if (totals[i]) {
-            /* Shows the averaged per-second rates for the last
-             * COVERAGE_RUN_INTERVAL interval, the last minute and
-             * the last hour. */
-            svec_add_nocopy(lines,
-                xasprintf("%-24s %5.1f/sec %9.3f/sec "
-                          "%13.4f/sec   total: %llu",
-                          c[i]->name,
-                          (c[i]->min[(idx_count - 1) % MIN_AVG_LEN]
-                           * 1000.0 / COVERAGE_RUN_INTERVAL),
-                          coverage_array_sum(c[i]->min, MIN_AVG_LEN) / 60.0,
-                          coverage_array_sum(c[i]->hr,  HR_AVG_LEN) / 3600.0,
-                          totals[i]));
-        } else {
-            n_never_hit++;
+        struct coverage_counter *c = coverage_counters[i];
+        if (c->count) {
+            coverage_read_counter(lines, c);
         }
     }
-
-    svec_add_nocopy(lines, xasprintf("%"PRIuSIZE" events never hit", n_never_hit));
-    free(totals);
+    for (i = 0; i < n_coverage_counters; i++) {
+        struct coverage_counter *c = coverage_counters[i];
+        if (!c->count) {
+            if (c->total) {
+                coverage_read_counter(lines, c);
+            } else {
+                n_never_hit++;
+            }
+        }
+    }
+    svec_add_nocopy(lines, xasprintf("%zu events never hit", n_never_hit));
 }
 
-/* Runs approximately every COVERAGE_CLEAR_INTERVAL amount of time to
- * synchronize per-thread counters with global counters. Every thread maintains
- * a separate timer to ensure all counters are periodically aggregated. */
+/* Advances to the next epoch of coverage, resetting all the counters to 0. */
 void
 coverage_clear(void)
 {
-    long long int now, *thread_time;
-
-    now = time_msec();
-    thread_time = coverage_clear_time_get();
-
-    /* Initialize the coverage_clear_time. */
-    if (*thread_time == LLONG_MIN) {
-        *thread_time = now + COVERAGE_CLEAR_INTERVAL;
-    }
-
-    if (now >= *thread_time) {
-        size_t i;
-
-        ovs_mutex_lock(&coverage_mutex);
-        for (i = 0; i < n_coverage_counters; i++) {
-            struct coverage_counter *c = coverage_counters[i];
-            c->total += c->count();
-        }
-        ovs_mutex_unlock(&coverage_mutex);
-        *thread_time = now + COVERAGE_CLEAR_INTERVAL;
-    }
-}
-
-/* Runs approximately every COVERAGE_RUN_INTERVAL amount of time to update the
- * coverage counters' 'min' and 'hr' array.  'min' array is for cumulating
- * per second counts into per minute count.  'hr' array is for cumulating per
- * minute counts into per hour count.  Every thread may call this function. */
-void
-coverage_run(void)
-{
-    /* Defines the moving average array index variables. */
-    static unsigned int min_idx, hr_idx;
-    struct coverage_counter **c = coverage_counters;
-    long long int now;
-
-    ovs_mutex_lock(&coverage_mutex);
-    now = time_msec();
-    /* Initialize the coverage_run_time. */
-    if (coverage_run_time == LLONG_MIN) {
-        coverage_run_time = now + COVERAGE_RUN_INTERVAL;
-    }
-
-    if (now >= coverage_run_time) {
-        size_t i, j;
-        /* Computes the number of COVERAGE_RUN_INTERVAL slots, since
-         * it is possible that the actual run interval is multiple of
-         * COVERAGE_RUN_INTERVAL. */
-        int slots = (now - coverage_run_time) / COVERAGE_RUN_INTERVAL + 1;
-
-        for (i = 0; i < n_coverage_counters; i++) {
-            unsigned int count, portion;
-            unsigned int m_idx = min_idx;
-            unsigned int h_idx = hr_idx;
-            unsigned int idx = idx_count;
-
-            /* Computes the differences between the current total and the one
-             * recorded in last invocation of coverage_run(). */
-            count = c[i]->total - c[i]->last_total;
-            c[i]->last_total = c[i]->total;
-            /* The count over the time interval is evenly distributed
-             * among slots by calculating the portion. */
-            portion = count / slots;
-
-            for (j = 0; j < slots; j++) {
-                /* Updates the index variables. */
-                /* The m_idx is increased from 0 to MIN_AVG_LEN - 1. Every
-                 * time the m_idx finishes a cycle (a cycle is one minute),
-                 * the h_idx is incremented by 1. */
-                m_idx = idx % MIN_AVG_LEN;
-                h_idx = idx / MIN_AVG_LEN;
-
-                c[i]->min[m_idx] = portion + (j == (slots - 1)
-                                              ? count % slots : 0);
-                c[i]->hr[h_idx] = m_idx == 0
-                                  ? c[i]->min[m_idx]
-                                  : (c[i]->hr[h_idx] + c[i]->min[m_idx]);
-                /* This is to guarantee that h_idx ranges from 0 to 59. */
-                idx = (idx + 1) % (MIN_AVG_LEN * HR_AVG_LEN);
-            }
-        }
-
-        /* Updates the global index variables. */
-        idx_count = (idx_count + slots) % (MIN_AVG_LEN * HR_AVG_LEN);
-        min_idx = idx_count % MIN_AVG_LEN;
-        hr_idx  = idx_count / MIN_AVG_LEN;
-        /* Updates the run time. */
-        coverage_run_time = now + COVERAGE_RUN_INTERVAL;
-    }
-    ovs_mutex_unlock(&coverage_mutex);
-}
-
-static unsigned int
-coverage_array_sum(const unsigned int *arr, const unsigned int len)
-{
-    unsigned int sum = 0;
     size_t i;
 
-    ovs_mutex_lock(&coverage_mutex);
-    for (i = 0; i < len; i++) {
-        sum += arr[i];
+    epoch++;
+    for (i = 0; i < n_coverage_counters; i++) {
+        struct coverage_counter *c = coverage_counters[i];
+        c->total += c->count;
+        c->count = 0;
     }
-    ovs_mutex_unlock(&coverage_mutex);
-    return sum;
 }

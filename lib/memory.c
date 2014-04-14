@@ -51,10 +51,7 @@ static void memory_init(void);
 
 /* Runs the memory monitor.
  *
- * The client should call memory_should_report() afterward.
- *
- * This function, and the remainder of this module's interface, should be
- * called from only a single thread. */
+ * The client should call memory_should_report() afterward. */
 void
 memory_run(void)
 {

@@ -19,21 +19,12 @@
 
 #include <stdio.h>
 
-struct flow;
 struct ofpbuf;
 
-/* PCAP file reading and writing. */
-FILE *ovs_pcap_open(const char *file_name, const char *mode);
-int ovs_pcap_read_header(FILE *);
-void ovs_pcap_write_header(FILE *);
-int ovs_pcap_read(FILE *, struct ofpbuf **, long long int *when);
-void ovs_pcap_write(FILE *, struct ofpbuf *);
-
-/* Extracting TCP stream data from an Ethernet packet capture. */
-
-struct tcp_reader *tcp_reader_open(void);
-void tcp_reader_close(struct tcp_reader *);
-struct ofpbuf *tcp_reader_run(struct tcp_reader *, const struct flow *,
-                              const struct ofpbuf *);
+FILE *pcap_open(const char *file_name, const char *mode);
+int pcap_read_header(FILE *);
+void pcap_write_header(FILE *);
+int pcap_read(FILE *, struct ofpbuf **);
+void pcap_write(FILE *, struct ofpbuf *);
 
 #endif /* pcap-file.h */

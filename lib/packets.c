@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009, 2010, 2011, 2012, 2013, 2014 Nicira, Inc.
+ * Copyright (c) 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,14 +23,10 @@
 #include <stdlib.h>
 #include "byte-order.h"
 #include "csum.h"
-#include "crc32c.h"
 #include "flow.h"
 #include "hmap.h"
 #include "dynamic-string.h"
 #include "ofpbuf.h"
-#include "ovs-thread.h"
-#include "odp-util.h"
-#include "unaligned.h"
 
 const struct in6_addr in6addr_exact = IN6ADDR_EXACT_INIT;
 
@@ -58,7 +54,7 @@ eth_addr_is_reserved(const uint8_t ea[ETH_ADDR_LEN])
 {
     struct eth_addr_node {
         struct hmap_node hmap_node;
-        const uint64_t ea64;
+        uint64_t ea64;
     };
 
     static struct eth_addr_node nodes[] = {
@@ -104,21 +100,20 @@ eth_addr_is_reserved(const uint8_t ea[ETH_ADDR_LEN])
         { HMAP_NODE_NULL_INITIALIZER, 0x01000cccccc7ULL },
     };
 
-    static struct ovsthread_once once = OVSTHREAD_ONCE_INITIALIZER;
+    static struct hmap addrs = HMAP_INITIALIZER(&addrs);
     struct eth_addr_node *node;
-    static struct hmap addrs;
     uint64_t ea64;
 
-    if (ovsthread_once_start(&once)) {
-        hmap_init(&addrs);
+    if (hmap_is_empty(&addrs)) {
         for (node = nodes; node < &nodes[ARRAY_SIZE(nodes)]; node++) {
-            hmap_insert(&addrs, &node->hmap_node, hash_uint64(node->ea64));
+            hmap_insert(&addrs, &node->hmap_node,
+                        hash_2words(node->ea64, node->ea64 >> 32));
         }
-        ovsthread_once_done(&once);
     }
 
     ea64 = eth_addr_to_uint64(ea);
-    HMAP_FOR_EACH_IN_BUCKET (node, hmap_node, hash_uint64(ea64), &addrs) {
+    HMAP_FOR_EACH_IN_BUCKET (node, hmap_node, hash_2words(ea64, ea64 >> 32),
+                             &addrs) {
         if (node->ea64 == ea64) {
             return true;
         }
@@ -129,7 +124,8 @@ eth_addr_is_reserved(const uint8_t ea[ETH_ADDR_LEN])
 bool
 eth_addr_from_string(const char *s, uint8_t ea[ETH_ADDR_LEN])
 {
-    if (ovs_scan(s, ETH_ADDR_SCAN_FMT, ETH_ADDR_SCAN_ARGS(ea))) {
+    if (sscanf(s, ETH_ADDR_SCAN_FMT, ETH_ADDR_SCAN_ARGS(ea))
+        == ETH_ADDR_SCAN_COUNT) {
         return true;
     } else {
         memset(ea, 0, ETH_ADDR_LEN);
@@ -150,9 +146,9 @@ compose_rarp(struct ofpbuf *b, const uint8_t eth_src[ETH_ADDR_LEN])
     struct arp_eth_header *arp;
 
     ofpbuf_clear(b);
-    ofpbuf_prealloc_tailroom(b, 2 + ETH_HEADER_LEN + VLAN_HEADER_LEN
+    ofpbuf_prealloc_tailroom(b, ETH_HEADER_LEN + VLAN_HEADER_LEN
                              + ARP_ETH_HEADER_LEN);
-    ofpbuf_reserve(b, 2 + VLAN_HEADER_LEN);
+    ofpbuf_reserve(b, VLAN_HEADER_LEN);
     eth = ofpbuf_put_uninit(b, sizeof *eth);
     memcpy(eth->eth_dst, eth_addr_broadcast, ETH_ADDR_LEN);
     memcpy(eth->eth_src, eth_src, ETH_ADDR_LEN);
@@ -165,28 +161,33 @@ compose_rarp(struct ofpbuf *b, const uint8_t eth_src[ETH_ADDR_LEN])
     arp->ar_pln = sizeof arp->ar_spa;
     arp->ar_op = htons(ARP_OP_RARP);
     memcpy(arp->ar_sha, eth_src, ETH_ADDR_LEN);
-    put_16aligned_be32(&arp->ar_spa, htonl(0));
+    arp->ar_spa = htonl(0);
     memcpy(arp->ar_tha, eth_src, ETH_ADDR_LEN);
-    put_16aligned_be32(&arp->ar_tpa, htonl(0));
-
-    ofpbuf_set_frame(b, eth);
-    ofpbuf_set_l3(b, arp);
+    arp->ar_tpa = htonl(0);
 }
 
 /* Insert VLAN header according to given TCI. Packet passed must be Ethernet
  * packet.  Ignores the CFI bit of 'tci' using 0 instead.
  *
- * Also adjusts the layer offsets accordingly. */
+ * Also sets 'packet->l2' to point to the new Ethernet header. */
 void
-eth_push_vlan(struct ofpbuf *packet, ovs_be16 tpid, ovs_be16 tci)
+eth_push_vlan(struct ofpbuf *packet, ovs_be16 tci)
 {
+    struct eth_header *eh = packet->data;
     struct vlan_eth_header *veh;
 
     /* Insert new 802.1Q header. */
-    veh = ofpbuf_resize_l2(packet, VLAN_HEADER_LEN);
-    memmove(veh, (char *)veh + VLAN_HEADER_LEN, 2 * ETH_ADDR_LEN);
-    veh->veth_type = tpid;
-    veh->veth_tci = tci & htons(~VLAN_CFI);
+    struct vlan_eth_header tmp;
+    memcpy(tmp.veth_dst, eh->eth_dst, ETH_ADDR_LEN);
+    memcpy(tmp.veth_src, eh->eth_src, ETH_ADDR_LEN);
+    tmp.veth_type = htons(ETH_TYPE_VLAN);
+    tmp.veth_tci = tci & htons(~VLAN_CFI);
+    tmp.veth_next_type = eh->eth_type;
+
+    veh = ofpbuf_push_uninit(packet, VLAN_HEADER_LEN);
+    memcpy(veh, &tmp, sizeof tmp);
+
+    packet->l2 = packet->data;
 }
 
 /* Removes outermost VLAN header (if any is present) from 'packet'.
@@ -196,32 +197,56 @@ eth_push_vlan(struct ofpbuf *packet, ovs_be16 tpid, ovs_be16 tci)
 void
 eth_pop_vlan(struct ofpbuf *packet)
 {
-    struct vlan_eth_header *veh = ofpbuf_l2(packet);
-
-    if (veh && ofpbuf_size(packet) >= sizeof *veh
+    struct vlan_eth_header *veh = packet->l2;
+    if (packet->size >= sizeof *veh
         && veh->veth_type == htons(ETH_TYPE_VLAN)) {
+        struct eth_header tmp;
 
-        memmove((char *)veh + VLAN_HEADER_LEN, veh, 2 * ETH_ADDR_LEN);
-        ofpbuf_resize_l2(packet, -VLAN_HEADER_LEN);
+        memcpy(tmp.eth_dst, veh->veth_dst, ETH_ADDR_LEN);
+        memcpy(tmp.eth_src, veh->veth_src, ETH_ADDR_LEN);
+        tmp.eth_type = veh->veth_next_type;
+
+        ofpbuf_pull(packet, VLAN_HEADER_LEN);
+        packet->l2 = (char*)packet->l2 + VLAN_HEADER_LEN;
+        memcpy(packet->data, &tmp, sizeof tmp);
     }
 }
 
+/* Return depth of mpls stack.
+ *
+ * 'packet->l2_5' should initially point to 'packet''s outer-most MPLS header
+ * or may be NULL if there are no MPLS headers. */
+uint16_t
+eth_mpls_depth(const struct ofpbuf *packet)
+{
+    struct mpls_hdr *mh = packet->l2_5;
+    uint16_t depth;
+
+    if (!mh) {
+        return 0;
+    }
+
+    depth = 0;
+    while (packet->size >= ((char *)mh - (char *)packet->data) + sizeof *mh) {
+        depth++;
+        if (mh->mpls_lse & htonl(MPLS_BOS_MASK)) {
+            break;
+        }
+        mh++;
+    }
+
+    return depth;
+}
+
 /* Set ethertype of the packet. */
-static void
+void
 set_ethertype(struct ofpbuf *packet, ovs_be16 eth_type)
 {
-    struct eth_header *eh = ofpbuf_l2(packet);
-
-    if (!eh) {
-        return;
-    }
+    struct eth_header *eh = packet->data;
 
     if (eh->eth_type == htons(ETH_TYPE_VLAN)) {
         ovs_be16 *p;
-        char *l2_5 = ofpbuf_l2_5(packet);
-
-        p = ALIGNED_CAST(ovs_be16 *,
-                         (l2_5 ? l2_5 : (char *)ofpbuf_l3(packet)) - 2);
+        p = (ovs_be16 *)((char *)(packet->l2_5 ? packet->l2_5 : packet->l3) - 2);
         *p = eth_type;
     } else {
         eh->eth_type = eth_type;
@@ -230,7 +255,7 @@ set_ethertype(struct ofpbuf *packet, ovs_be16 eth_type)
 
 static bool is_mpls(struct ofpbuf *packet)
 {
-    return packet->l2_5_ofs != UINT16_MAX;
+    return packet->l2_5 != NULL;
 }
 
 /* Set time to live (TTL) of an MPLS label stack entry (LSE). */
@@ -279,16 +304,36 @@ set_mpls_lse_values(uint8_t ttl, uint8_t tc, uint8_t bos, ovs_be32 label)
     return lse;
 }
 
+/* Push an new MPLS stack entry onto the MPLS stack and adjust 'packet->l2' and
+ * 'packet->l2_5' accordingly.  The new entry will be the outermost entry on
+ * the stack.
+ *
+ * Previous to calling this function, 'packet->l2_5' must be set; if the MPLS
+ * label to be pushed will be the first label in 'packet', then it should be
+ * the same as 'packet->l3'. */
+static void
+push_mpls_lse(struct ofpbuf *packet, struct mpls_hdr *mh)
+{
+    char * header;
+    size_t len;
+    header = ofpbuf_push_uninit(packet, MPLS_HLEN);
+    len = (char *)packet->l2_5 - (char *)packet->l2;
+    memmove(header, packet->l2, len);
+    memcpy(header + len, mh, sizeof *mh);
+    packet->l2 = (char*)packet->l2 - MPLS_HLEN;
+    packet->l2_5 = (char*)packet->l2_5 - MPLS_HLEN;
+}
+
 /* Set MPLS label stack entry to outermost MPLS header.*/
 void
 set_mpls_lse(struct ofpbuf *packet, ovs_be32 mpls_lse)
 {
+    struct mpls_hdr *mh = packet->l2_5;
+
     /* Packet type should be MPLS to set label stack entry. */
     if (is_mpls(packet)) {
-        struct mpls_hdr *mh = ofpbuf_l2_5(packet);
-
         /* Update mpls label stack entry. */
-        put_16aligned_be32(&mh->mpls_lse, mpls_lse);
+        mh->mpls_lse = mpls_lse;
     }
 }
 
@@ -298,25 +343,21 @@ set_mpls_lse(struct ofpbuf *packet, ovs_be32 mpls_lse)
 void
 push_mpls(struct ofpbuf *packet, ovs_be16 ethtype, ovs_be32 lse)
 {
-    char * header;
-    size_t len;
+    struct mpls_hdr mh;
 
     if (!eth_type_mpls(ethtype)) {
         return;
     }
 
     if (!is_mpls(packet)) {
-        /* Set MPLS label stack offset. */
-        packet->l2_5_ofs = packet->l3_ofs;
+        /* Set ethtype and MPLS label stack entry. */
+        set_ethertype(packet, ethtype);
+        packet->l2_5 = packet->l3;
     }
 
-    set_ethertype(packet, ethtype);
-
     /* Push new MPLS shim header onto packet. */
-    len = packet->l2_5_ofs;
-    header = ofpbuf_resize_l2_5(packet, MPLS_HLEN);
-    memmove(header, header + MPLS_HLEN, len);
-    memcpy(header + len, &lse, sizeof lse);
+    mh.mpls_lse = lse;
+    push_mpls_lse(packet, &mh);
 }
 
 /* If 'packet' is an MPLS packet, removes its outermost MPLS label stack entry.
@@ -326,32 +367,36 @@ push_mpls(struct ofpbuf *packet, ovs_be16 ethtype, ovs_be32 lse)
 void
 pop_mpls(struct ofpbuf *packet, ovs_be16 ethtype)
 {
-    if (is_mpls(packet)) {
-        struct mpls_hdr *mh = ofpbuf_l2_5(packet);
-        size_t len = packet->l2_5_ofs;
+    struct mpls_hdr *mh = NULL;
 
-        set_ethertype(packet, ethtype);
-        if (get_16aligned_be32(&mh->mpls_lse) & htonl(MPLS_BOS_MASK)) {
-            ofpbuf_set_l2_5(packet, NULL);
+    if (is_mpls(packet)) {
+        size_t len;
+        mh = packet->l2_5;
+        len = (char*)packet->l2_5 - (char*)packet->l2;
+        /* If bottom of the stack set ethertype. */
+        if (mh->mpls_lse & htonl(MPLS_BOS_MASK)) {
+            set_ethertype(packet, ethtype);
+            packet->l2_5 = NULL;
+        } else {
+            packet->l2_5 = (char*)packet->l2_5 + MPLS_HLEN;
         }
         /* Shift the l2 header forward. */
-        memmove((char*)ofpbuf_data(packet) + MPLS_HLEN, ofpbuf_data(packet), len);
-        ofpbuf_resize_l2_5(packet, -MPLS_HLEN);
+        memmove((char*)packet->data + MPLS_HLEN, packet->data, len);
+        packet->size -= MPLS_HLEN;
+        packet->data = (char*)packet->data + MPLS_HLEN;
+        packet->l2 = (char*)packet->l2 + MPLS_HLEN;
     }
 }
 
 /* Converts hex digits in 'hex' to an Ethernet packet in '*packetp'.  The
  * caller must free '*packetp'.  On success, returns NULL.  On failure, returns
- * an error message and stores NULL in '*packetp'.
- *
- * Aligns the L3 header of '*packetp' on a 32-bit boundary. */
+ * an error message and stores NULL in '*packetp'. */
 const char *
 eth_from_hex(const char *hex, struct ofpbuf **packetp)
 {
     struct ofpbuf *packet;
 
-    /* Use 2 bytes of headroom to 32-bit align the L3 header. */
-    packet = *packetp = ofpbuf_new_with_headroom(strlen(hex) / 2, 2);
+    packet = *packetp = ofpbuf_new(strlen(hex) / 2);
 
     if (ofpbuf_put_hex(packet, hex, NULL)[0] != '\0') {
         ofpbuf_delete(packet);
@@ -359,7 +404,7 @@ eth_from_hex(const char *hex, struct ofpbuf **packetp)
         return "Trailing garbage in packet data";
     }
 
-    if (ofpbuf_size(packet) < ETH_HEADER_LEN) {
+    if (packet->size < ETH_HEADER_LEN) {
         ofpbuf_delete(packet);
         *packetp = NULL;
         return "Packet data too short for Ethernet";
@@ -398,14 +443,14 @@ eth_addr_bitand(const uint8_t src[ETH_ADDR_LEN],
 int
 ip_count_cidr_bits(ovs_be32 netmask)
 {
-    return 32 - ctz32(ntohl(netmask));
+    return 32 - ctz(ntohl(netmask));
 }
 
 void
 ip_format_masked(ovs_be32 ip, ovs_be32 mask, struct ds *s)
 {
     ds_put_format(s, IP_FMT, IP_ARGS(ip));
-    if (mask != OVS_BE32_MAX) {
+    if (mask != htonl(UINT32_MAX)) {
         if (ip_is_cidr(mask)) {
             ds_put_format(s, "/%d", ip_count_cidr_bits(mask));
         } else {
@@ -551,9 +596,8 @@ ipv6_is_cidr(const struct in6_addr *netmask)
 /* Populates 'b' with an Ethernet II packet headed with the given 'eth_dst',
  * 'eth_src' and 'eth_type' parameters.  A payload of 'size' bytes is allocated
  * in 'b' and returned.  This payload may be populated with appropriate
- * information by the caller.  Sets 'b''s 'frame' pointer and 'l3' offset to
- * the Ethernet header and payload respectively.  Aligns b->l3 on a 32-bit
- * boundary.
+ * information by the caller.  Sets 'b''s 'l2' and 'l3' pointers to the
+ * Ethernet header and payload respectively.
  *
  * The returned packet has enough headroom to insert an 802.1Q VLAN header if
  * desired. */
@@ -567,10 +611,8 @@ eth_compose(struct ofpbuf *b, const uint8_t eth_dst[ETH_ADDR_LEN],
 
     ofpbuf_clear(b);
 
-    /* The magic 2 here ensures that the L3 header (when it is added later)
-     * will be 32-bit aligned. */
-    ofpbuf_prealloc_tailroom(b, 2 + ETH_HEADER_LEN + VLAN_HEADER_LEN + size);
-    ofpbuf_reserve(b, 2 + VLAN_HEADER_LEN);
+    ofpbuf_prealloc_tailroom(b, ETH_HEADER_LEN + VLAN_HEADER_LEN + size);
+    ofpbuf_reserve(b, VLAN_HEADER_LEN);
     eth = ofpbuf_put_uninit(b, ETH_HEADER_LEN);
     data = ofpbuf_put_uninit(b, size);
 
@@ -578,57 +620,54 @@ eth_compose(struct ofpbuf *b, const uint8_t eth_dst[ETH_ADDR_LEN],
     memcpy(eth->eth_src, eth_src, ETH_ADDR_LEN);
     eth->eth_type = htons(eth_type);
 
-    ofpbuf_set_frame(b, eth);
-    ofpbuf_set_l3(b, data);
+    b->l2 = eth;
+    b->l3 = data;
 
     return data;
 }
 
 static void
-packet_set_ipv4_addr(struct ofpbuf *packet,
-                     ovs_16aligned_be32 *addr, ovs_be32 new_addr)
+packet_set_ipv4_addr(struct ofpbuf *packet, ovs_be32 *addr, ovs_be32 new_addr)
 {
-    struct ip_header *nh = ofpbuf_l3(packet);
-    ovs_be32 old_addr = get_16aligned_be32(addr);
-    size_t l4_size = ofpbuf_l4_size(packet);
+    struct ip_header *nh = packet->l3;
 
-    if (nh->ip_proto == IPPROTO_TCP && l4_size >= TCP_HEADER_LEN) {
-        struct tcp_header *th = ofpbuf_l4(packet);
+    if (nh->ip_proto == IPPROTO_TCP && packet->l7) {
+        struct tcp_header *th = packet->l4;
 
-        th->tcp_csum = recalc_csum32(th->tcp_csum, old_addr, new_addr);
-    } else if (nh->ip_proto == IPPROTO_UDP && l4_size >= UDP_HEADER_LEN ) {
-        struct udp_header *uh = ofpbuf_l4(packet);
+        th->tcp_csum = recalc_csum32(th->tcp_csum, *addr, new_addr);
+    } else if (nh->ip_proto == IPPROTO_UDP && packet->l7) {
+        struct udp_header *uh = packet->l4;
 
         if (uh->udp_csum) {
-            uh->udp_csum = recalc_csum32(uh->udp_csum, old_addr, new_addr);
+            uh->udp_csum = recalc_csum32(uh->udp_csum, *addr, new_addr);
             if (!uh->udp_csum) {
                 uh->udp_csum = htons(0xffff);
             }
         }
     }
-    nh->ip_csum = recalc_csum32(nh->ip_csum, old_addr, new_addr);
-    put_16aligned_be32(addr, new_addr);
+    nh->ip_csum = recalc_csum32(nh->ip_csum, *addr, new_addr);
+    *addr = new_addr;
 }
 
 /* Returns true, if packet contains at least one routing header where
  * segements_left > 0.
  *
- * This function assumes that L3 and L4 offsets are set in the packet. */
+ * This function assumes that L3 and L4 markers are set in the packet. */
 static bool
 packet_rh_present(struct ofpbuf *packet)
 {
-    const struct ovs_16aligned_ip6_hdr *nh;
+    const struct ip6_hdr *nh;
     int nexthdr;
     size_t len;
     size_t remaining;
-    uint8_t *data = ofpbuf_l3(packet);
+    uint8_t *data = packet->l3;
 
-    remaining = packet->l4_ofs - packet->l3_ofs;
+    remaining = (uint8_t *)packet->l4 - (uint8_t *)packet->l3;
 
     if (remaining < sizeof *nh) {
         return false;
     }
-    nh = ALIGNED_CAST(struct ovs_16aligned_ip6_hdr *, data);
+    nh = (struct ip6_hdr *)data;
     data += sizeof *nh;
     remaining -= sizeof *nh;
     nexthdr = nh->ip6_nxt;
@@ -664,8 +703,7 @@ packet_rh_present(struct ofpbuf *packet)
             nexthdr = ext_hdr->ip6e_nxt;
             len = (ext_hdr->ip6e_len + 2) * 4;
         } else if (nexthdr == IPPROTO_FRAGMENT) {
-            const struct ovs_16aligned_ip6_frag *frag_hdr
-                = ALIGNED_CAST(struct ovs_16aligned_ip6_frag *, data);
+            const struct ip6_frag *frag_hdr = (struct ip6_frag *)data;
 
             nexthdr = frag_hdr->ip6f_nxt;
             len = sizeof *frag_hdr;
@@ -697,16 +735,14 @@ packet_rh_present(struct ofpbuf *packet)
 
 static void
 packet_update_csum128(struct ofpbuf *packet, uint8_t proto,
-                     ovs_16aligned_be32 addr[4], const ovs_be32 new_addr[4])
+                     ovs_be32 addr[4], const ovs_be32 new_addr[4])
 {
-    size_t l4_size = ofpbuf_l4_size(packet);
-
-    if (proto == IPPROTO_TCP && l4_size >= TCP_HEADER_LEN) {
-        struct tcp_header *th = ofpbuf_l4(packet);
+    if (proto == IPPROTO_TCP && packet->l7) {
+        struct tcp_header *th = packet->l4;
 
         th->tcp_csum = recalc_csum128(th->tcp_csum, addr, new_addr);
-    } else if (proto == IPPROTO_UDP && l4_size >= UDP_HEADER_LEN) {
-        struct udp_header *uh = ofpbuf_l4(packet);
+    } else if (proto == IPPROTO_UDP && packet->l7) {
+        struct udp_header *uh = packet->l4;
 
         if (uh->udp_csum) {
             uh->udp_csum = recalc_csum128(uh->udp_csum, addr, new_addr);
@@ -719,29 +755,25 @@ packet_update_csum128(struct ofpbuf *packet, uint8_t proto,
 
 static void
 packet_set_ipv6_addr(struct ofpbuf *packet, uint8_t proto,
-                     ovs_16aligned_be32 addr[4], const ovs_be32 new_addr[4],
+                     struct in6_addr *addr, const ovs_be32 new_addr[4],
                      bool recalculate_csum)
 {
     if (recalculate_csum) {
-        packet_update_csum128(packet, proto, addr, new_addr);
+        packet_update_csum128(packet, proto, (ovs_be32 *)addr, new_addr);
     }
-    memcpy(addr, new_addr, sizeof(ovs_be32[4]));
+    memcpy(addr, new_addr, sizeof(*addr));
 }
 
 static void
-packet_set_ipv6_flow_label(ovs_16aligned_be32 *flow_label, ovs_be32 flow_key)
+packet_set_ipv6_flow_label(ovs_be32 *flow_label, ovs_be32 flow_key)
 {
-    ovs_be32 old_label = get_16aligned_be32(flow_label);
-    ovs_be32 new_label = (old_label & htonl(~IPV6_LABEL_MASK)) | flow_key;
-    put_16aligned_be32(flow_label, new_label);
+    *flow_label = (*flow_label & htonl(~IPV6_LABEL_MASK)) | flow_key;
 }
 
 static void
-packet_set_ipv6_tc(ovs_16aligned_be32 *flow_label, uint8_t tc)
+packet_set_ipv6_tc(ovs_be32 *flow_label, uint8_t tc)
 {
-    ovs_be32 old_label = get_16aligned_be32(flow_label);
-    ovs_be32 new_label = (old_label & htonl(0xF00FFFFF)) | htonl(tc << 20);
-    put_16aligned_be32(flow_label, new_label);
+    *flow_label = (*flow_label & htonl(0xF00FFFFF)) | htonl(tc << 20);
 }
 
 /* Modifies the IPv4 header fields of 'packet' to be consistent with 'src',
@@ -752,13 +784,13 @@ void
 packet_set_ipv4(struct ofpbuf *packet, ovs_be32 src, ovs_be32 dst,
                 uint8_t tos, uint8_t ttl)
 {
-    struct ip_header *nh = ofpbuf_l3(packet);
+    struct ip_header *nh = packet->l3;
 
-    if (get_16aligned_be32(&nh->ip_src) != src) {
+    if (nh->ip_src != src) {
         packet_set_ipv4_addr(packet, &nh->ip_src, src);
     }
 
-    if (get_16aligned_be32(&nh->ip_dst) != dst) {
+    if (nh->ip_dst != dst) {
         packet_set_ipv4_addr(packet, &nh->ip_dst, dst);
     }
 
@@ -782,20 +814,20 @@ packet_set_ipv4(struct ofpbuf *packet, ovs_be32 src, ovs_be32 dst,
 /* Modifies the IPv6 header fields of 'packet' to be consistent with 'src',
  * 'dst', 'traffic class', and 'next hop'.  Updates 'packet''s L4 checksums as
  * appropriate. 'packet' must contain a valid IPv6 packet with correctly
- * populated l[34] offsets. */
+ * populated l[347] markers. */
 void
 packet_set_ipv6(struct ofpbuf *packet, uint8_t proto, const ovs_be32 src[4],
                 const ovs_be32 dst[4], uint8_t key_tc, ovs_be32 key_fl,
                 uint8_t key_hl)
 {
-    struct ovs_16aligned_ip6_hdr *nh = ofpbuf_l3(packet);
+    struct ip6_hdr *nh = packet->l3;
 
     if (memcmp(&nh->ip6_src, src, sizeof(ovs_be32[4]))) {
-        packet_set_ipv6_addr(packet, proto, nh->ip6_src.be32, src, true);
+        packet_set_ipv6_addr(packet, proto, &nh->ip6_src, src, true);
     }
 
     if (memcmp(&nh->ip6_dst, dst, sizeof(ovs_be32[4]))) {
-        packet_set_ipv6_addr(packet, proto, nh->ip6_dst.be32, dst,
+        packet_set_ipv6_addr(packet, proto, &nh->ip6_dst, dst,
                              !packet_rh_present(packet));
     }
 
@@ -817,11 +849,11 @@ packet_set_port(ovs_be16 *port, ovs_be16 new_port, ovs_be16 *csum)
 
 /* Sets the TCP source and destination port ('src' and 'dst' respectively) of
  * the TCP header contained in 'packet'.  'packet' must be a valid TCP packet
- * with its l4 offset properly populated. */
+ * with its l4 marker properly populated. */
 void
 packet_set_tcp_port(struct ofpbuf *packet, ovs_be16 src, ovs_be16 dst)
 {
-    struct tcp_header *th = ofpbuf_l4(packet);
+    struct tcp_header *th = packet->l4;
 
     packet_set_port(&th->tcp_src, src, &th->tcp_csum);
     packet_set_port(&th->tcp_dst, dst, &th->tcp_csum);
@@ -829,11 +861,11 @@ packet_set_tcp_port(struct ofpbuf *packet, ovs_be16 src, ovs_be16 dst)
 
 /* Sets the UDP source and destination port ('src' and 'dst' respectively) of
  * the UDP header contained in 'packet'.  'packet' must be a valid UDP packet
- * with its l4 offset properly populated. */
+ * with its l4 marker properly populated. */
 void
 packet_set_udp_port(struct ofpbuf *packet, ovs_be16 src, ovs_be16 dst)
 {
-    struct udp_header *uh = ofpbuf_l4(packet);
+    struct udp_header *uh = packet->l4;
 
     if (uh->udp_csum) {
         packet_set_port(&uh->udp_src, src, &uh->udp_csum);
@@ -848,65 +880,27 @@ packet_set_udp_port(struct ofpbuf *packet, ovs_be16 src, ovs_be16 dst)
     }
 }
 
-/* Sets the SCTP source and destination port ('src' and 'dst' respectively) of
- * the SCTP header contained in 'packet'.  'packet' must be a valid SCTP packet
- * with its l4 offset properly populated. */
-void
-packet_set_sctp_port(struct ofpbuf *packet, ovs_be16 src, ovs_be16 dst)
+/* If 'packet' is a TCP packet, returns the TCP flags.  Otherwise, returns 0.
+ *
+ * 'flow' must be the flow corresponding to 'packet' and 'packet''s header
+ * pointers must be properly initialized (e.g. with flow_extract()). */
+uint8_t
+packet_get_tcp_flags(const struct ofpbuf *packet, const struct flow *flow)
 {
-    struct sctp_header *sh = ofpbuf_l4(packet);
-    ovs_be32 old_csum, old_correct_csum, new_csum;
-    uint16_t tp_len = ofpbuf_l4_size(packet);
-
-    old_csum = get_16aligned_be32(&sh->sctp_csum);
-    put_16aligned_be32(&sh->sctp_csum, 0);
-    old_correct_csum = crc32c((void *)sh, tp_len);
-
-    sh->sctp_src = src;
-    sh->sctp_dst = dst;
-
-    new_csum = crc32c((void *)sh, tp_len);
-    put_16aligned_be32(&sh->sctp_csum, old_csum ^ old_correct_csum ^ new_csum);
-}
-
-const char *
-packet_tcp_flag_to_string(uint32_t flag)
-{
-    switch (flag) {
-    case TCP_FIN:
-        return "fin";
-    case TCP_SYN:
-        return "syn";
-    case TCP_RST:
-        return "rst";
-    case TCP_PSH:
-        return "psh";
-    case TCP_ACK:
-        return "ack";
-    case TCP_URG:
-        return "urg";
-    case TCP_ECE:
-        return "ece";
-    case TCP_CWR:
-        return "cwr";
-    case TCP_NS:
-        return "ns";
-    case 0x200:
-        return "[200]";
-    case 0x400:
-        return "[400]";
-    case 0x800:
-        return "[800]";
-    default:
-        return NULL;
+    if (dl_type_is_ip_any(flow->dl_type) &&
+        flow->nw_proto == IPPROTO_TCP && packet->l7) {
+        const struct tcp_header *tcp = packet->l4;
+        return TCP_FLAGS(tcp->tcp_ctl);
+    } else {
+        return 0;
     }
 }
 
 /* Appends a string representation of the TCP flags value 'tcp_flags'
- * (e.g. from struct flow.tcp_flags or obtained via TCP_FLAGS) to 's', in the
+ * (e.g. obtained via packet_get_tcp_flags() or TCP_FLAGS) to 's', in the
  * format used by tcpdump. */
 void
-packet_format_tcp_flags(struct ds *s, uint16_t tcp_flags)
+packet_format_tcp_flags(struct ds *s, uint8_t tcp_flags)
 {
     if (!tcp_flags) {
         ds_put_cstr(s, "none");
@@ -931,22 +925,10 @@ packet_format_tcp_flags(struct ds *s, uint16_t tcp_flags)
     if (tcp_flags & TCP_ACK) {
         ds_put_char(s, '.');
     }
-    if (tcp_flags & TCP_ECE) {
-        ds_put_cstr(s, "E");
+    if (tcp_flags & 0x40) {
+        ds_put_cstr(s, "[40]");
     }
-    if (tcp_flags & TCP_CWR) {
-        ds_put_cstr(s, "C");
-    }
-    if (tcp_flags & TCP_NS) {
-        ds_put_cstr(s, "N");
-    }
-    if (tcp_flags & 0x200) {
-        ds_put_cstr(s, "[200]");
-    }
-    if (tcp_flags & 0x400) {
-        ds_put_cstr(s, "[400]");
-    }
-    if (tcp_flags & 0x800) {
-        ds_put_cstr(s, "[800]");
+    if (tcp_flags & 0x80) {
+        ds_put_cstr(s, "[80]");
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012, 2013 Nicira, Inc.
+ * Copyright (c) 2011, 2012 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,6 @@
 #ifndef LEARN_H
 #define LEARN_H 1
 
-#include "compiler.h"
 #include "ofp-errors.h"
 
 struct ds;
@@ -42,7 +41,7 @@ void learn_execute(const struct ofpact_learn *, const struct flow *,
                    struct ofputil_flow_mod *, struct ofpbuf *ofpacts);
 void learn_mask(const struct ofpact_learn *, struct flow_wildcards *);
 
-char *learn_parse(char *, struct ofpbuf *ofpacts) WARN_UNUSED_RESULT;
+void learn_parse(char *, const struct flow *, struct ofpbuf *ofpacts);
 void learn_format(const struct ofpact_learn *, struct ds *);
 
 #endif /* learn.h */

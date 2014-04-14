@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008, 2009, 2010, 2011, 2013, 2014 Nicira, Inc.
+ * Copyright (c) 2008, 2009, 2010, 2011 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,7 +19,6 @@
 #include <getopt.h>
 #include <limits.h>
 #include <stdlib.h>
-#include "ovs-thread.h"
 #include "util.h"
 #include "vlog.h"
 
@@ -93,17 +92,10 @@ run_command(int argc, char *argv[], const struct command commands[])
 
 /* Process title. */
 
-#ifdef __linux__
-static struct ovs_mutex proctitle_mutex = OVS_MUTEX_INITIALIZER;
-
-/* Start of command-line arguments in memory. */
-static char *argv_start OVS_GUARDED_BY(proctitle_mutex);
-
-/* Number of bytes of command-line arguments. */
-static size_t argv_size OVS_GUARDED_BY(proctitle_mutex);
-
-/* Saved command-line arguments. */
-static char *saved_proctitle OVS_GUARDED_BY(proctitle_mutex);
+#ifdef LINUX_DATAPATH
+static char *argv_start;       /* Start of command-line arguments in memory. */
+static size_t argv_size;       /* Number of bytes of command-line arguments. */
+static char *saved_proctitle;  /* Saved command-line arguments. */
 
 /* Prepares the process so that proctitle_set() can later succeed.
  *
@@ -118,13 +110,11 @@ proctitle_init(int argc, char **argv)
 {
     int i;
 
-    assert_single_threaded();
     if (!argc || !argv[0]) {
         /* This situation should never occur, but... */
         return;
     }
 
-    ovs_mutex_lock(&proctitle_mutex);
     /* Specialized version of first loop iteration below. */
     argv_start = argv[0];
     argv_size = strlen(argv[0]) + 1;
@@ -148,7 +138,6 @@ proctitle_init(int argc, char **argv)
         /* Copy out the old argument so we can reuse the space. */
         argv[i] = xstrdup(argv[i]);
     }
-    ovs_mutex_unlock(&proctitle_mutex);
 }
 
 /* Changes the name of the process, as shown by "ps", to the program name
@@ -159,9 +148,8 @@ proctitle_set(const char *format, ...)
     va_list args;
     int n;
 
-    ovs_mutex_lock(&proctitle_mutex);
     if (!argv_start || argv_size < 8) {
-        goto out;
+        return;
     }
 
     if (!saved_proctitle) {
@@ -182,24 +170,19 @@ proctitle_set(const char *format, ...)
         memset(&argv_start[n], '\0', argv_size - n);
     }
     va_end(args);
-
-out:
-    ovs_mutex_unlock(&proctitle_mutex);
 }
 
 /* Restores the process's original command line, as seen by "ps". */
 void
 proctitle_restore(void)
 {
-    ovs_mutex_lock(&proctitle_mutex);
     if (saved_proctitle) {
         memcpy(argv_start, saved_proctitle, argv_size);
         free(saved_proctitle);
         saved_proctitle = NULL;
     }
-    ovs_mutex_unlock(&proctitle_mutex);
 }
-#else  /* !__linux__ */
+#else  /* !LINUX_DATAPATH*/
 /* Stubs that don't do anything on non-Linux systems. */
 
 void
@@ -207,8 +190,8 @@ proctitle_init(int argc OVS_UNUSED, char **argv OVS_UNUSED)
 {
 }
 
-#if !(defined(__FreeBSD__) || defined(__NetBSD__))
-/* On these platforms we #define this to setproctitle. */
+#ifndef __FreeBSD__
+/* On FreeBSD we #define this to setproctitle. */
 void
 proctitle_set(const char *format OVS_UNUSED, ...)
 {
@@ -219,4 +202,4 @@ void
 proctitle_restore(void)
 {
 }
-#endif  /* !__linux__ */
+#endif  /* !LINUX_DATAPATH */

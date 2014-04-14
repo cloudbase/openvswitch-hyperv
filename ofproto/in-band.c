@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008, 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
+ * Copyright (c) 2008, 2009, 2010, 2011, 2012 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -76,7 +76,7 @@ struct in_band_remote {
 /* What to do to an in_band_rule. */
 enum in_band_op {
     ADD,                       /* Add the rule to ofproto's flow table. */
-    DEL                        /* Delete the rule from ofproto's flow table. */
+    DELETE                     /* Delete the rule from ofproto's flow table. */
 };
 
 /* A rule to add to or delete from ofproto's flow table.  */
@@ -120,8 +120,7 @@ refresh_remote(struct in_band *ib, struct in_band_remote *r)
                                  &next_hop_inaddr, &next_hop_dev);
     if (retval) {
         VLOG_WARN("cannot find route for controller ("IP_FMT"): %s",
-                  IP_ARGS(r->remote_addr.sin_addr.s_addr),
-                  ovs_strerror(retval));
+                  IP_ARGS(r->remote_addr.sin_addr.s_addr), strerror(retval));
         return 1;
     }
     if (!next_hop_inaddr.s_addr) {
@@ -139,7 +138,7 @@ refresh_remote(struct in_band *ib, struct in_band_remote *r)
             VLOG_WARN_RL(&rl, "cannot open netdev %s (next hop "
                          "to controller "IP_FMT"): %s",
                          next_hop_dev, IP_ARGS(r->remote_addr.sin_addr.s_addr),
-                         ovs_strerror(retval));
+                         strerror(retval));
             free(next_hop_dev);
             return 1;
         }
@@ -151,7 +150,7 @@ refresh_remote(struct in_band *ib, struct in_band_remote *r)
                                r->remote_mac);
     if (retval) {
         VLOG_DBG_RL(&rl, "cannot look up remote MAC address ("IP_FMT"): %s",
-                    IP_ARGS(next_hop_inaddr.s_addr), ovs_strerror(retval));
+                    IP_ARGS(next_hop_inaddr.s_addr), strerror(retval));
     }
 
     /* If we don't have a MAC address, then refresh quickly, since we probably
@@ -223,16 +222,31 @@ refresh_local(struct in_band *ib)
     return true;
 }
 
-/* Returns true if packets in 'flow' should be directed to the local port.
- * (This keeps the flow table from preventing DHCP replies from being seen by
- * the local port.) */
+/* Returns true if the rule that would match 'flow' with 'actions' is
+ * allowed to be set up in the datapath. */
 bool
-in_band_must_output_to_local_port(const struct flow *flow)
+in_band_rule_check(const struct flow *flow, uint32_t local_odp_port,
+                   const struct nlattr *actions, size_t actions_len)
 {
-    return (flow->dl_type == htons(ETH_TYPE_IP)
+    /* Don't allow flows that would prevent DHCP replies from being seen
+     * by the local port. */
+    if (flow->dl_type == htons(ETH_TYPE_IP)
             && flow->nw_proto == IPPROTO_UDP
             && flow->tp_src == htons(DHCP_SERVER_PORT)
-            && flow->tp_dst == htons(DHCP_CLIENT_PORT));
+            && flow->tp_dst == htons(DHCP_CLIENT_PORT)) {
+        const struct nlattr *a;
+        unsigned int left;
+
+        NL_ATTR_FOR_EACH_UNSAFE (a, left, actions, actions_len) {
+            if (nl_attr_type(a) == OVS_ACTION_ATTR_OUTPUT
+                && nl_attr_get_u32(a) == local_odp_port) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    return true;
 }
 
 static void
@@ -265,7 +279,7 @@ update_rules(struct in_band *ib)
     /* Mark all the existing rules for deletion.  (Afterward we will re-add any
      * rules that are still valid.) */
     HMAP_FOR_EACH (ib_rule, hmap_node, &ib->rules) {
-        ib_rule->op = DEL;
+        ib_rule->op = DELETE;
     }
 
     if (ib->n_remotes && !eth_addr_is_zero(ib->local_mac)) {
@@ -382,10 +396,10 @@ in_band_run(struct in_band *ib)
         switch (rule->op) {
         case ADD:
             ofproto_add_flow(ib->ofproto, &rule->match, rule->priority,
-                             ofpbuf_data(&ofpacts), ofpbuf_size(&ofpacts));
+                             ofpacts.data, ofpacts.size);
             break;
 
-        case DEL:
+        case DELETE:
             if (ofproto_delete_flow(ib->ofproto,
                                     &rule->match, rule->priority)) {
                 /* ofproto doesn't have the rule anymore so there's no reason
@@ -422,8 +436,7 @@ in_band_create(struct ofproto *ofproto, const char *local_name,
     error = netdev_open(local_name, "internal", &local_netdev);
     if (error) {
         VLOG_ERR("failed to initialize in-band control: cannot open "
-                 "datapath local port %s (%s)",
-                 local_name, ovs_strerror(error));
+                 "datapath local port %s (%s)", local_name, strerror(error));
         return error;
     }
 

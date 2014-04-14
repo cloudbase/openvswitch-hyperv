@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009, 2010, 2011, 2012, 2013, 2014 Nicira, Inc.
+ * Copyright (c) 2009, 2010, 2011, 2012 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,21 +31,18 @@
 #include "daemon.h"
 #include "dirs.h"
 #include "dynamic-string.h"
-#include "fatal-signal.h"
 #include "json.h"
 #include "jsonrpc.h"
 #include "lib/table.h"
 #include "ovsdb.h"
 #include "ovsdb-data.h"
 #include "ovsdb-error.h"
-#include "poll-loop.h"
 #include "sort.h"
 #include "svec.h"
 #include "stream.h"
 #include "stream-ssl.h"
 #include "table.h"
 #include "timeval.h"
-#include "unixctl.h"
 #include "util.h"
 #include "vlog.h"
 
@@ -72,7 +69,7 @@ static bool timestamp;
 /* Format for table output. */
 static struct table_style table_style = TABLE_STYLE_DEFAULT;
 
-static const struct ovsdb_client_command *get_all_commands(void);
+static const struct ovsdb_client_command all_commands[];
 
 static void usage(void) NO_RETURN;
 static void parse_options(int argc, char *argv[]);
@@ -89,13 +86,13 @@ main(int argc, char *argv[])
     proctitle_init(argc, argv);
     set_program_name(argv[0]);
     parse_options(argc, argv);
-    fatal_ignore_sigpipe();
+    signal(SIGPIPE, SIG_IGN);
 
     if (optind >= argc) {
         ovs_fatal(0, "missing command name; use --help for help");
     }
 
-    for (command = get_all_commands(); ; command++) {
+    for (command = all_commands; ; command++) {
         if (!command->name) {
             VLOG_FATAL("unknown command '%s'; use --help for help",
                        argv[optind]);
@@ -166,15 +163,14 @@ parse_options(int argc, char *argv[])
     enum {
         OPT_BOOTSTRAP_CA_CERT = UCHAR_MAX + 1,
         OPT_TIMESTAMP,
-        VLOG_OPTION_ENUMS,
         DAEMON_OPTION_ENUMS,
         TABLE_OPTION_ENUMS
     };
-    static const struct option long_options[] = {
+    static struct option long_options[] = {
+        {"verbose", optional_argument, NULL, 'v'},
         {"help", no_argument, NULL, 'h'},
         {"version", no_argument, NULL, 'V'},
         {"timestamp", no_argument, NULL, OPT_TIMESTAMP},
-        VLOG_LONG_OPTIONS,
         DAEMON_LONG_OPTIONS,
 #ifdef HAVE_OPENSSL
         {"bootstrap-ca-cert", required_argument, NULL, OPT_BOOTSTRAP_CA_CERT},
@@ -201,9 +197,14 @@ parse_options(int argc, char *argv[])
             ovs_print_version(0, 0);
             exit(EXIT_SUCCESS);
 
-        VLOG_OPTION_HANDLERS
+        case 'v':
+            vlog_set_verbosity(optarg);
+            break;
+
         DAEMON_OPTION_HANDLERS
+
         TABLE_OPTION_HANDLERS(&table_style)
+
         STREAM_SSL_OPTION_HANDLERS
 
         case OPT_BOOTSTRAP_CA_CERT:
@@ -252,9 +253,6 @@ usage(void)
            "    monitor contents of COLUMNs in TABLE in DATABASE on SERVER.\n"
            "    COLUMNs may include !initial, !insert, !delete, !modify\n"
            "    to avoid seeing the specified kinds of changes.\n"
-           "\n  monitor [SERVER] [DATABASE] ALL\n"
-           "    monitor all changes to all columns in all tables\n"
-           "    in DATBASE on SERVER.\n"
            "\n  dump [SERVER] [DATABASE]\n"
            "    dump contents of DATABASE on SERVER to stdout\n"
            "\nThe default SERVER is unix:%s/db.sock.\n"
@@ -389,7 +387,7 @@ fetch_dbs(struct jsonrpc *rpc, struct svec *dbs)
         const struct json *name = reply->result->u.array.elems[i];
 
         if (name->type != JSON_STRING) {
-            ovs_fatal(0, "list_dbs response %"PRIuSIZE" is not string", i);
+            ovs_fatal(0, "list_dbs response %zu is not string", i);
         }
         svec_add(dbs, name->u.string);
     }
@@ -505,13 +503,6 @@ do_transact(struct jsonrpc *rpc, const char *database OVS_UNUSED,
     putchar('\n');
     jsonrpc_msg_destroy(reply);
 }
-
-/* "monitor" command. */
-
-struct monitored_table {
-    struct ovsdb_table_schema *table;
-    struct ovsdb_column_set columns;
-};
 
 static void
 monitor_print_row(struct json *row, const char *type, const char *uuid,
@@ -542,24 +533,30 @@ monitor_print_row(struct json *row, const char *type, const char *uuid,
 }
 
 static void
-monitor_print_table(struct json *table_update,
-                    const struct monitored_table *mt, char *caption,
-                    bool initial)
+monitor_print(struct json *table_updates,
+              const struct ovsdb_table_schema *table,
+              const struct ovsdb_column_set *columns, bool initial)
 {
-    const struct ovsdb_table_schema *table = mt->table;
-    const struct ovsdb_column_set *columns = &mt->columns;
+    struct json *table_update;
     struct shash_node *node;
     struct table t;
     size_t i;
 
-    if (table_update->type != JSON_OBJECT) {
-        ovs_error(0, "<table-update> for table %s is not object", table->name);
-        return;
-    }
-
     table_init(&t);
     table_set_timestamp(&t, timestamp);
-    table_set_caption(&t, caption);
+
+    if (table_updates->type != JSON_OBJECT) {
+        ovs_error(0, "<table-updates> is not object");
+        return;
+    }
+    table_update = shash_find_data(json_object(table_updates), table->name);
+    if (!table_update) {
+        return;
+    }
+    if (table_update->type != JSON_OBJECT) {
+        ovs_error(0, "<table-update> is not object");
+        return;
+    }
 
     table_add_column(&t, "row");
     table_add_column(&t, "action");
@@ -589,30 +586,6 @@ monitor_print_table(struct json *table_update,
     }
     table_print(&t, &table_style);
     table_destroy(&t);
-}
-
-static void
-monitor_print(struct json *table_updates,
-              const struct monitored_table *mts, size_t n_mts,
-              bool initial)
-{
-    size_t i;
-
-    if (table_updates->type != JSON_OBJECT) {
-        ovs_error(0, "<table-updates> is not object");
-        return;
-    }
-
-    for (i = 0; i < n_mts; i++) {
-        const struct monitored_table *mt = &mts[i];
-        struct json *table_update = shash_find_data(json_object(table_updates),
-                                                    mt->table->name);
-        if (table_update) {
-            monitor_print_table(table_update, mt,
-                                n_mts > 1 ? xstrdup(mt->table->name) : NULL,
-                                initial);
-        }
-    }
 }
 
 static void
@@ -680,7 +653,7 @@ parse_monitor_columns(char *arg, const char *server, const char *database,
         }
         free(nodes);
 
-        add_column(server, ovsdb_table_schema_get_column(table, "_version"),
+        add_column(server, ovsdb_table_schema_get_column(table,"_version"),
                    columns, columns_json);
     }
 
@@ -697,59 +670,24 @@ parse_monitor_columns(char *arg, const char *server, const char *database,
 }
 
 static void
-ovsdb_client_exit(struct unixctl_conn *conn, int argc OVS_UNUSED,
-                  const char *argv[] OVS_UNUSED, void *exiting_)
+do_monitor(struct jsonrpc *rpc, const char *database,
+           int argc, char *argv[])
 {
-    bool *exiting = exiting_;
-    *exiting = true;
-    unixctl_command_reply(conn, NULL);
-}
+    const char *server = jsonrpc_get_name(rpc);
+    const char *table_name = argv[0];
+    struct ovsdb_column_set columns = OVSDB_COLUMN_SET_INITIALIZER;
+    struct ovsdb_table_schema *table;
+    struct ovsdb_schema *schema;
+    struct jsonrpc_msg *request;
+    struct json *monitor, *monitor_request_array,
+        *monitor_requests, *request_id;
 
-static void
-ovsdb_client_block(struct unixctl_conn *conn, int argc OVS_UNUSED,
-                   const char *argv[] OVS_UNUSED, void *blocked_)
-{
-    bool *blocked = blocked_;
-
-    if (!*blocked) {
-        *blocked = true;
-        unixctl_command_reply(conn, NULL);
-    } else {
-        unixctl_command_reply(conn, "already blocking");
+    schema = fetch_schema(rpc, database);
+    table = shash_find_data(&schema->tables, table_name);
+    if (!table) {
+        ovs_fatal(0, "%s: %s does not have a table named \"%s\"",
+                  server, database, table_name);
     }
-}
-
-static void
-ovsdb_client_unblock(struct unixctl_conn *conn, int argc OVS_UNUSED,
-                     const char *argv[] OVS_UNUSED, void *blocked_)
-{
-    bool *blocked = blocked_;
-
-    if (*blocked) {
-        *blocked = false;
-        unixctl_command_reply(conn, NULL);
-    } else {
-        unixctl_command_reply(conn, "already unblocked");
-    }
-}
-
-static void
-add_monitored_table(int argc, char *argv[],
-                    const char *server, const char *database,
-                    struct ovsdb_table_schema *table,
-                    struct json *monitor_requests,
-                    struct monitored_table **mts,
-                    size_t *n_mts, size_t *allocated_mts)
-{
-    struct json *monitor_request_array;
-    struct monitored_table *mt;
-
-    if (*n_mts >= *allocated_mts) {
-        *mts = x2nrealloc(*mts, allocated_mts, sizeof **mts);
-    }
-    mt = &(*mts)[(*n_mts)++];
-    mt->table = table;
-    ovsdb_column_set_init(&mt->columns);
 
     monitor_request_array = json_array_create_empty();
     if (argc > 1) {
@@ -759,140 +697,58 @@ add_monitored_table(int argc, char *argv[],
             json_array_add(
                 monitor_request_array,
                 parse_monitor_columns(argv[i], server, database, table,
-                                      &mt->columns));
+                                      &columns));
         }
     } else {
-        /* Allocate a writable empty string since parse_monitor_columns()
-         * is going to strtok() it and that's risky with literal "". */
+        /* Allocate a writable empty string since parse_monitor_columns() is
+         * going to strtok() it and that's risky with literal "". */
         char empty[] = "";
         json_array_add(
             monitor_request_array,
-            parse_monitor_columns(empty, server, database,
-                                  table, &mt->columns));
+            parse_monitor_columns(empty, server, database, table, &columns));
     }
-
-    json_object_put(monitor_requests, table->name, monitor_request_array);
-}
-
-static void
-do_monitor(struct jsonrpc *rpc, const char *database,
-           int argc, char *argv[])
-{
-    const char *server = jsonrpc_get_name(rpc);
-    const char *table_name = argv[0];
-    struct unixctl_server *unixctl;
-    struct ovsdb_schema *schema;
-    struct jsonrpc_msg *request;
-    struct json *monitor, *monitor_requests, *request_id;
-    bool exiting = false;
-    bool blocked = false;
-
-    struct monitored_table *mts;
-    size_t n_mts, allocated_mts;
-
-    daemon_save_fd(STDOUT_FILENO);
-    daemonize_start();
-    if (get_detach()) {
-        int error;
-
-        error = unixctl_server_create(NULL, &unixctl);
-        if (error) {
-            ovs_fatal(error, "failed to create unixctl server");
-        }
-
-        unixctl_command_register("exit", "", 0, 0,
-                                 ovsdb_client_exit, &exiting);
-        unixctl_command_register("ovsdb-client/block", "", 0, 0,
-                                 ovsdb_client_block, &blocked);
-        unixctl_command_register("ovsdb-client/unblock", "", 0, 0,
-                                 ovsdb_client_unblock, &blocked);
-    } else {
-        unixctl = NULL;
-    }
-
-    schema = fetch_schema(rpc, database);
 
     monitor_requests = json_object_create();
-
-    mts = NULL;
-    n_mts = allocated_mts = 0;
-    if (strcmp(table_name, "ALL")) {
-        struct ovsdb_table_schema *table;
-
-        table = shash_find_data(&schema->tables, table_name);
-        if (!table) {
-            ovs_fatal(0, "%s: %s does not have a table named \"%s\"",
-                      server, database, table_name);
-        }
-
-        add_monitored_table(argc, argv, server, database, table,
-                            monitor_requests, &mts, &n_mts, &allocated_mts);
-    } else {
-        size_t n = shash_count(&schema->tables);
-        const struct shash_node **nodes = shash_sort(&schema->tables);
-        size_t i;
-
-        for (i = 0; i < n; i++) {
-            struct ovsdb_table_schema *table = nodes[i]->data;
-
-            add_monitored_table(argc, argv, server, database, table,
-                                monitor_requests,
-                                &mts, &n_mts, &allocated_mts);
-        }
-        free(nodes);
-    }
+    json_object_put(monitor_requests, table_name, monitor_request_array);
 
     monitor = json_array_create_3(json_string_create(database),
                                   json_null_create(), monitor_requests);
     request = jsonrpc_create_request("monitor", monitor, NULL);
     request_id = json_clone(request->id);
     jsonrpc_send(rpc, request);
-
     for (;;) {
-        unixctl_server_run(unixctl);
-        while (!blocked) {
-            struct jsonrpc_msg *msg;
-            int error;
+        struct jsonrpc_msg *msg;
+        int error;
 
-            error = jsonrpc_recv(rpc, &msg);
-            if (error == EAGAIN) {
-                break;
-            } else if (error) {
-                ovs_fatal(error, "%s: receive failed", server);
+        error = jsonrpc_recv_block(rpc, &msg);
+        if (error) {
+            ovsdb_schema_destroy(schema);
+            ovs_fatal(error, "%s: receive failed", server);
+        }
+
+        if (msg->type == JSONRPC_REQUEST && !strcmp(msg->method, "echo")) {
+            jsonrpc_send(rpc, jsonrpc_create_reply(json_clone(msg->params),
+                                                   msg->id));
+        } else if (msg->type == JSONRPC_REPLY
+                   && json_equal(msg->id, request_id)) {
+            monitor_print(msg->result, table, &columns, true);
+            fflush(stdout);
+            if (get_detach()) {
+                daemon_save_fd(STDOUT_FILENO);
+                daemonize();
             }
-
-            if (msg->type == JSONRPC_REQUEST && !strcmp(msg->method, "echo")) {
-                jsonrpc_send(rpc, jsonrpc_create_reply(json_clone(msg->params),
-                                                       msg->id));
-            } else if (msg->type == JSONRPC_REPLY
-                       && json_equal(msg->id, request_id)) {
-                monitor_print(msg->result, mts, n_mts, true);
+        } else if (msg->type == JSONRPC_NOTIFY
+                   && !strcmp(msg->method, "update")) {
+            struct json *params = msg->params;
+            if (params->type == JSON_ARRAY
+                && params->u.array.n == 2
+                && params->u.array.elems[0]->type == JSON_NULL) {
+                monitor_print(params->u.array.elems[1],
+                              table, &columns, false);
                 fflush(stdout);
-                daemonize_complete();
-            } else if (msg->type == JSONRPC_NOTIFY
-                       && !strcmp(msg->method, "update")) {
-                struct json *params = msg->params;
-                if (params->type == JSON_ARRAY
-                    && params->u.array.n == 2
-                    && params->u.array.elems[0]->type == JSON_NULL) {
-                    monitor_print(params->u.array.elems[1], mts, n_mts, false);
-                    fflush(stdout);
-                }
             }
-            jsonrpc_msg_destroy(msg);
         }
-
-        if (exiting) {
-            break;
-        }
-
-        jsonrpc_run(rpc);
-        jsonrpc_wait(rpc);
-        if (!blocked) {
-            jsonrpc_recv_wait(rpc);
-        }
-        unixctl_server_wait(unixctl);
-        poll_block();
+        jsonrpc_msg_destroy(msg);
     }
 }
 
@@ -991,7 +847,7 @@ dump_table(const struct ovsdb_table_schema *ts, struct json_array *rows)
         struct shash *row;
 
         if (rows->elems[y]->type != JSON_OBJECT) {
-            ovs_fatal(0,  "row %"PRIuSIZE" in table %s response is not a JSON object: "
+            ovs_fatal(0,  "row %zu in table %s response is not a JSON object: "
                       "%s", y, ts->name, json_to_string(rows->elems[y], 0));
         }
         row = json_object(rows->elems[y]);
@@ -1000,7 +856,7 @@ dump_table(const struct ovsdb_table_schema *ts, struct json_array *rows)
         for (x = 0; x < n_columns; x++) {
             const struct json *json = shash_find_data(row, columns[x]->name);
             if (!json) {
-                ovs_fatal(0, "row %"PRIuSIZE" in table %s response lacks %s column",
+                ovs_fatal(0, "row %zu in table %s response lacks %s column",
                           y, ts->name, columns[x]->name);
             }
 
@@ -1089,7 +945,7 @@ do_dump(struct jsonrpc *rpc, const char *database,
     /* Print database contents. */
     if (reply->result->type != JSON_ARRAY
         || reply->result->u.array.n != n_tables) {
-        ovs_fatal(0, "reply is not array of %"PRIuSIZE" elements: %s",
+        ovs_fatal(0, "reply is not array of %zu elements: %s",
                   n_tables, json_to_string(reply->result, 0));
     }
     for (i = 0; i < n_tables; i++) {
@@ -1141,8 +997,3 @@ static const struct ovsdb_client_command all_commands[] = {
 
     { NULL,                 0,             0, 0,       NULL },
 };
-
-static const struct ovsdb_client_command *get_all_commands(void)
-{
-    return all_commands;
-}

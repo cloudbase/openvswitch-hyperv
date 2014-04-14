@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
+ * Copyright (c) 2009, 2010, 2011, 2012 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -218,19 +218,21 @@ table_print_table_line__(struct ds *line)
     ds_clear(line);
 }
 
-static char *
-table_format_timestamp__(void)
+static void
+table_format_timestamp__(char *s, size_t size)
 {
-    return xastrftime_msec("%Y-%m-%d %H:%M:%S.###", time_wall_msec(), true);
+    time_t now = time_wall();
+    strftime(s, size, "%Y-%m-%d %H:%M:%S", gmtime(&now));
 }
 
 static void
 table_print_timestamp__(const struct table *table)
 {
     if (table->timestamp) {
-        char *s = table_format_timestamp__();
+        char s[32];
+
+        table_format_timestamp__(s, sizeof s);
         puts(s);
-        free(s);
     }
 }
 
@@ -497,9 +499,10 @@ table_print_json__(const struct table *table, const struct table_style *style)
         json_object_put_string(json, "caption", table->caption);
     }
     if (table->timestamp) {
-        char *s = table_format_timestamp__();
+        char s[32];
+
+        table_format_timestamp__(s, sizeof s);
         json_object_put_string(json, "time", s);
-        free(s);
     }
 
     headings = json_array_create_empty();

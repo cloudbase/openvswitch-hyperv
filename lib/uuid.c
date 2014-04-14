@@ -1,4 +1,4 @@
-/* Copyright (c) 2008, 2009, 2010, 2011, 2013 Nicira, Inc.
+/* Copyright (c) 2008, 2009, 2010, 2011 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,7 +26,6 @@
 
 #include "aes128.h"
 #include "entropy.h"
-#include "ovs-thread.h"
 #include "sha1.h"
 #include "timeval.h"
 #include "util.h"
@@ -50,8 +49,11 @@ static void do_init(void);
 void
 uuid_init(void)
 {
-    static pthread_once_t once = PTHREAD_ONCE_INIT;
-    pthread_once(&once, do_init);
+    static bool inited;
+    if (!inited) {
+        do_init();
+        inited = true;
+    }
 }
 
 /* Generates a new random UUID in 'uuid'.
@@ -81,22 +83,15 @@ uuid_init(void)
 void
 uuid_generate(struct uuid *uuid)
 {
-    static struct ovs_mutex mutex = OVS_MUTEX_INITIALIZER;
-    uint64_t copy[2];
-
     uuid_init();
 
-    /* Copy out the counter's current value, then increment it. */
-    ovs_mutex_lock(&mutex);
-    copy[0] = counter[0];
-    copy[1] = counter[1];
+    /* Increment the counter. */
     if (++counter[1] == 0) {
         counter[0]++;
     }
-    ovs_mutex_unlock(&mutex);
 
     /* AES output is exactly 16 bytes, so we encrypt directly into 'uuid'. */
-    aes128_encrypt(&key, copy, uuid);
+    aes128_encrypt(&key, counter, uuid);
 
     /* Set bits to indicate a random UUID.  See RFC 4122 section 4.4. */
     uuid->parts[2] &= ~0xc0000000;
@@ -206,33 +201,31 @@ error:
 }
 
 static void
-sha1_update_int(struct sha1_ctx *sha1_ctx, uintmax_t x)
-{
-   sha1_update(sha1_ctx, &x, sizeof x);
-}
-
-static void
 do_init(void)
 {
     uint8_t sha1[SHA1_DIGEST_SIZE];
     struct sha1_ctx sha1_ctx;
     uint8_t random_seed[16];
     struct timeval now;
+    pid_t pid, ppid;
+    uid_t uid;
+    gid_t gid;
 
     /* Get seed data. */
     get_entropy_or_die(random_seed, sizeof random_seed);
     xgettimeofday(&now);
+    pid = getpid();
+    ppid = getppid();
+    uid = getuid();
+    gid = getgid();
 
     /* Convert seed into key. */
     sha1_init(&sha1_ctx);
     sha1_update(&sha1_ctx, random_seed, sizeof random_seed);
-    sha1_update(&sha1_ctx, &now, sizeof now);
-    sha1_update_int(&sha1_ctx, getpid());
-#ifndef _WIN32
-    sha1_update_int(&sha1_ctx, getppid());
-    sha1_update_int(&sha1_ctx, getuid());
-    sha1_update_int(&sha1_ctx, getgid());
-#endif
+    sha1_update(&sha1_ctx, &pid, sizeof pid);
+    sha1_update(&sha1_ctx, &ppid, sizeof ppid);
+    sha1_update(&sha1_ctx, &uid, sizeof uid);
+    sha1_update(&sha1_ctx, &gid, sizeof gid);
     sha1_final(&sha1_ctx, sha1);
 
     /* Generate key. */

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008, 2011, 2013 Nicira, Inc.
+ * Copyright (c) 2008, 2011 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,11 +18,19 @@
 #define SIGNALS_H 1
 
 #include <signal.h>
-#include "type-props.h"
+#include <stdbool.h>
 
-enum { SIGNAL_NAME_BUFSIZE = 7 + INT_STRLEN(int) + 1 };
-const char *signal_name(int signum, char *namebuf, size_t bufsize);
+void signal_init(void);
+
+struct signal *signal_register(int signr);
+void signal_unregister(struct signal *);
+
+bool signal_poll(struct signal *);
+void signal_wait(struct signal *);
+
+const char *signal_name(int signum);
 
 void xsigaction(int signum, const struct sigaction *, struct sigaction *old);
+void xsigprocmask(int how, const sigset_t *, sigset_t *old);
 
 #endif /* signals.h */

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008, 2009, 2010, 2011, 2013 Nicira, Inc.
+ * Copyright (c) 2008, 2009, 2010, 2011 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,7 +21,9 @@
 #include <stddef.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
-#include "flow.h"
+#ifdef _WIN32
+#include <flow.h>
+#endif
 
 struct flow;
 struct in_band;
@@ -40,6 +42,7 @@ void in_band_set_remotes(struct in_band *,
 bool in_band_run(struct in_band *);
 void in_band_wait(struct in_band *);
 
-bool in_band_must_output_to_local_port(const struct flow *);
+bool in_band_rule_check(const struct flow *, uint32_t local_odp_port,
+                        const struct nlattr *odp_actions, size_t actions_len);
 
 #endif /* in-band.h */

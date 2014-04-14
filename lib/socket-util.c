@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008, 2009, 2010, 2011, 2012, 2013, 2014 Nicira, Inc.
+ * Copyright (c) 2008, 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,7 +26,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/ioctl.h>
+#include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/uio.h>
@@ -34,12 +34,11 @@
 #include <unistd.h>
 #include "dynamic-string.h"
 #include "fatal-signal.h"
-#include "ovs-thread.h"
 #include "packets.h"
 #include "poll-loop.h"
 #include "util.h"
 #include "vlog.h"
-#ifdef __linux__
+#if AF_PACKET && LINUX_DATAPATH
 #include <linux/if_packet.h>
 #endif
 #ifdef HAVE_NETLINK
@@ -51,20 +50,14 @@ VLOG_DEFINE_THIS_MODULE(socket_util);
 
 /* #ifdefs make it a pain to maintain code: you have to try to build both ways.
  * Thus, this file compiles all of the code regardless of the target, by
- * writing "if (LINUX)" instead of "#ifdef __linux__". */
-#ifdef __linux__
-#define LINUX 1
-#else
-#define LINUX 0
+ * writing "if (LINUX_DATAPATH)" instead of "#ifdef __linux__". */
+#ifndef LINUX_DATAPATH
+#define LINUX_DATAPATH 0
 #endif
 
 #ifndef O_DIRECTORY
 #define O_DIRECTORY 0
 #endif
-
-/* Maximum length of the sun_path member in a struct sockaddr_un, excluding
- * space for a null terminator. */
-#define MAX_UN_LEN (sizeof(((struct sockaddr_un *) 0)->sun_path) - 1)
 
 static int getsockopt_int(int fd, int level, int option, const char *optname,
                           int *valuep);
@@ -74,28 +67,18 @@ static int getsockopt_int(int fd, int level, int option, const char *optname,
 int
 set_nonblocking(int fd)
 {
-#ifndef _WIN32
     int flags = fcntl(fd, F_GETFL, 0);
     if (flags != -1) {
         if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) != -1) {
             return 0;
         } else {
-            VLOG_ERR("fcntl(F_SETFL) failed: %s", ovs_strerror(errno));
+            VLOG_ERR("fcntl(F_SETFL) failed: %s", strerror(errno));
             return errno;
         }
     } else {
-        VLOG_ERR("fcntl(F_GETFL) failed: %s", ovs_strerror(errno));
+        VLOG_ERR("fcntl(F_GETFL) failed: %s", strerror(errno));
         return errno;
     }
-#else
-    unsigned long arg = 1;
-    if (ioctlsocket(fd, FIONBIO, &arg)) {
-        int error = sock_errno();
-        VLOG_ERR("set_nonblocking failed: %s", sock_strerror(error));
-        return error;
-    }
-    return 0;
-#endif
 }
 
 void
@@ -110,42 +93,56 @@ int
 set_dscp(int fd, uint8_t dscp)
 {
     int val;
-    bool success;
 
     if (dscp > 63) {
         return EINVAL;
     }
 
-    /* Note: this function is used for both of IPv4 and IPv6 sockets */
-    success = false;
     val = dscp << 2;
     if (setsockopt(fd, IPPROTO_IP, IP_TOS, &val, sizeof val)) {
-#ifndef _WIN32
-        if (sock_errno() != ENOPROTOOPT) {
-#else
-        if (sock_errno() != WSAENOPROTOOPT) {
-#endif
-            return sock_errno();
-        }
-    } else {
-        success = true;
-    }
-    if (setsockopt(fd, IPPROTO_IPV6, IPV6_TCLASS, &val, sizeof val)) {
-#ifndef _WIN32
-        if (sock_errno() != ENOPROTOOPT) {
-#else
-        if (sock_errno() != WSAENOPROTOOPT) {
-#endif
-            return sock_errno();
-        }
-    } else {
-        success = true;
-    }
-    if (!success) {
-        return ENOPROTOOPT;
+        return errno;
     }
 
     return 0;
+}
+
+static bool
+rlim_is_finite(rlim_t limit)
+{
+    if (limit == RLIM_INFINITY) {
+        return false;
+    }
+
+#ifdef RLIM_SAVED_CUR           /* FreeBSD 8.0 lacks RLIM_SAVED_CUR. */
+    if (limit == RLIM_SAVED_CUR) {
+        return false;
+    }
+#endif
+
+#ifdef RLIM_SAVED_MAX           /* FreeBSD 8.0 lacks RLIM_SAVED_MAX. */
+    if (limit == RLIM_SAVED_MAX) {
+        return false;
+    }
+#endif
+
+    return true;
+}
+
+/* Returns the maximum valid FD value, plus 1. */
+int
+get_max_fds(void)
+{
+    static int max_fds = -1;
+    if (max_fds < 0) {
+        struct rlimit r;
+        if (!getrlimit(RLIMIT_NOFILE, &r) && rlim_is_finite(r.rlim_cur)) {
+            max_fds = r.rlim_cur;
+        } else {
+            VLOG_WARN("failed to obtain fd limit, defaulting to 1024");
+            max_fds = 1024;
+        }
+    }
+    return max_fds;
 }
 
 /* Translates 'host_name', which must be a string representation of an IP
@@ -154,7 +151,7 @@ set_dscp(int fd, uint8_t dscp)
 int
 lookup_ip(const char *host_name, struct in_addr *addr)
 {
-    if (!inet_pton(AF_INET, host_name, addr)) {
+    if (!inet_aton(host_name, addr)) {
         static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
         VLOG_ERR_RL(&rl, "\"%s\" is not a valid IP address", host_name);
         return ENOENT;
@@ -181,64 +178,30 @@ lookup_ipv6(const char *host_name, struct in6_addr *addr)
  * successful, otherwise a positive errno value.
  *
  * Most Open vSwitch code should not use this because it causes deadlocks:
- * getaddrinfo() sends out a DNS request but that starts a new flow for which
+ * gethostbyname() sends out a DNS request but that starts a new flow for which
  * OVS must set up a flow, but it can't because it's waiting for a DNS reply.
  * The synchronous lookup also delays other activity.  (Of course we can solve
  * this but it doesn't seem worthwhile quite yet.)  */
 int
 lookup_hostname(const char *host_name, struct in_addr *addr)
 {
-    struct addrinfo *result;
-    struct addrinfo hints;
+    struct hostent *h;
 
-    if (inet_pton(AF_INET, host_name, addr)) {
+    if (inet_aton(host_name, addr)) {
         return 0;
     }
 
-    memset(&hints, 0, sizeof hints);
-    hints.ai_family = AF_INET;
-
-    switch (getaddrinfo(host_name, NULL, &hints, &result)) {
-    case 0:
-        *addr = ALIGNED_CAST(struct sockaddr_in *,
-                             result->ai_addr)->sin_addr;
-        freeaddrinfo(result);
+    h = gethostbyname(host_name);
+    if (h) {
+        *addr = *(struct in_addr *) h->h_addr;
         return 0;
-
-#ifdef EAI_ADDRFAMILY
-    case EAI_ADDRFAMILY:
-#endif
-    case EAI_NONAME:
-    case EAI_SERVICE:
-        return ENOENT;
-
-    case EAI_AGAIN:
-        return EAGAIN;
-
-    case EAI_BADFLAGS:
-    case EAI_FAMILY:
-    case EAI_SOCKTYPE:
-        return EINVAL;
-
-    case EAI_FAIL:
-        return EIO;
-
-    case EAI_MEMORY:
-        return ENOMEM;
-
-#if defined (EAI_NODATA) && EAI_NODATA != EAI_NONAME
-    case EAI_NODATA:
-        return ENXIO;
-#endif
-
-#ifdef EAI_SYSTEM
-    case EAI_SYSTEM:
-        return sock_errno();
-#endif
-
-    default:
-        return EPROTO;
     }
+
+    return (h_errno == HOST_NOT_FOUND ? ENOENT
+            : h_errno == TRY_AGAIN ? EAGAIN
+            : h_errno == NO_RECOVERY ? EIO
+            : h_errno == NO_ADDRESS ? ENXIO
+            : EINVAL);
 }
 
 int
@@ -250,19 +213,14 @@ check_connection_completion(int fd)
 
     pfd.fd = fd;
     pfd.events = POLLOUT;
-
-#ifndef _WIN32
     do {
         retval = poll(&pfd, 1, 0);
     } while (retval < 0 && errno == EINTR);
-#else
-    retval = WSAPoll(&pfd, 1, 0);
-#endif
     if (retval == 1) {
         if (pfd.revents & POLLERR) {
-            ssize_t n = send(fd, "", 1, 0);
+            ssize_t n = send(fd, "", 1, MSG_DONTWAIT);
             if (n < 0) {
-                return sock_errno();
+                return errno;
             } else {
                 VLOG_ERR_RL(&rl, "poll return POLLERR but send succeeded");
                 return EPROTO;
@@ -270,14 +228,13 @@ check_connection_completion(int fd)
         }
         return 0;
     } else if (retval < 0) {
-        VLOG_ERR_RL(&rl, "poll: %s", sock_strerror(sock_errno()));
+        VLOG_ERR_RL(&rl, "poll: %s", strerror(errno));
         return errno;
     } else {
         return EAGAIN;
     }
 }
 
-#ifndef _WIN32
 /* Drain all the data currently in the receive queue of a datagram socket (and
  * possibly additional data).  There is no way to know how many packets are in
  * the receive queue, but we do know that the total number of bytes queued does
@@ -302,7 +259,7 @@ drain_rcvbuf(int fd)
          *
          * On other Unix-like OSes, MSG_TRUNC has no effect in the flags
          * argument. */
-        char buffer[LINUX ? 1 : 2048];
+        char buffer[LINUX_DATAPATH ? 1 : 2048];
         ssize_t n_bytes = recv(fd, buffer, sizeof buffer,
                                MSG_TRUNC | MSG_DONTWAIT);
         if (n_bytes <= 0 || n_bytes >= rcvbuf) {
@@ -312,7 +269,6 @@ drain_rcvbuf(int fd)
     }
     return 0;
 }
-#endif
 
 /* Returns the size of socket 'sock''s receive buffer (SO_RCVBUF), or a
  * negative errno value if an error occurs. */
@@ -344,162 +300,78 @@ drain_fd(int fd, size_t n_packets)
     }
 }
 
-#ifndef _WIN32
-/* Attempts to shorten 'name' by opening a file descriptor for the directory
- * part of the name and indirecting through /proc/self/fd/<dirfd>/<basename>.
- * On systems with Linux-like /proc, this works as long as <basename> isn't too
- * long.
- *
- * On success, returns 0 and stores the short name in 'short_name' and a
- * directory file descriptor to eventually be closed in '*dirfpd'. */
-static int
-shorten_name_via_proc(const char *name, char short_name[MAX_UN_LEN + 1],
-                      int *dirfdp)
+/* Stores in '*un' a sockaddr_un that refers to file 'name'.  Stores in
+ * '*un_len' the size of the sockaddr_un. */
+static void
+make_sockaddr_un__(const char *name, struct sockaddr_un *un, socklen_t *un_len)
 {
-    char *dir, *base;
-    int dirfd;
-    int len;
-
-    if (!LINUX) {
-        return ENAMETOOLONG;
-    }
-
-    dir = dir_name(name);
-    dirfd = open(dir, O_DIRECTORY | O_RDONLY);
-    if (dirfd < 0) {
-        static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 1);
-        int error = errno;
-
-        VLOG_WARN_RL(&rl, "%s: open failed (%s)", dir, ovs_strerror(error));
-        free(dir);
-
-        return error;
-    }
-    free(dir);
-
-    base = base_name(name);
-    len = snprintf(short_name, MAX_UN_LEN + 1,
-                   "/proc/self/fd/%d/%s", dirfd, base);
-    free(base);
-
-    if (len >= 0 && len <= MAX_UN_LEN) {
-        *dirfdp = dirfd;
-        return 0;
-    } else {
-        close(dirfd);
-        return ENAMETOOLONG;
-    }
-}
-
-/* Attempts to shorten 'name' by creating a symlink for the directory part of
- * the name and indirecting through <symlink>/<basename>.  This works on
- * systems that support symlinks, as long as <basename> isn't too long.
- *
- * On success, returns 0 and stores the short name in 'short_name' and the
- * symbolic link to eventually delete in 'linkname'. */
-static int
-shorten_name_via_symlink(const char *name, char short_name[MAX_UN_LEN + 1],
-                         char linkname[MAX_UN_LEN + 1])
-{
-    char *abs, *dir, *base;
-    const char *tmpdir;
-    int error;
-    int i;
-
-    abs = abs_file_name(NULL, name);
-    dir = dir_name(abs);
-    base = base_name(abs);
-    free(abs);
-
-    tmpdir = getenv("TMPDIR");
-    if (tmpdir == NULL) {
-        tmpdir = "/tmp";
-    }
-
-    for (i = 0; i < 1000; i++) {
-        int len;
-
-        len = snprintf(linkname, MAX_UN_LEN + 1,
-                       "%s/ovs-un-c-%"PRIu32, tmpdir, random_uint32());
-        error = (len < 0 || len > MAX_UN_LEN ? ENAMETOOLONG
-                 : symlink(dir, linkname) ? errno
-                 : 0);
-        if (error != EEXIST) {
-            break;
-        }
-    }
-
-    if (!error) {
-        int len;
-
-        fatal_signal_add_file_to_unlink(linkname);
-
-        len = snprintf(short_name, MAX_UN_LEN + 1, "%s/%s", linkname, base);
-        if (len < 0 || len > MAX_UN_LEN) {
-            fatal_signal_unlink_file_now(linkname);
-            error = ENAMETOOLONG;
-        }
-    }
-
-    if (error) {
-        linkname[0] = '\0';
-    }
-    free(dir);
-    free(base);
-
-    return error;
+    un->sun_family = AF_UNIX;
+    ovs_strzcpy(un->sun_path, name, sizeof un->sun_path);
+    *un_len = (offsetof(struct sockaddr_un, sun_path)
+                + strlen (un->sun_path) + 1);
 }
 
 /* Stores in '*un' a sockaddr_un that refers to file 'name'.  Stores in
  * '*un_len' the size of the sockaddr_un.
  *
- * Returns 0 on success, otherwise a positive errno value.
- *
- * Uses '*dirfdp' and 'linkname' to store references to data when the caller no
- * longer needs to use 'un'.  On success, freeing these references with
- * free_sockaddr_un() is mandatory to avoid a leak; on failure, freeing them is
- * unnecessary but harmless. */
+ * Returns 0 on success, otherwise a positive errno value.  On success,
+ * '*dirfdp' is either -1 or a nonnegative file descriptor that the caller
+ * should close after using '*un' to bind or connect.  On failure, '*dirfdp' is
+ * -1. */
 static int
 make_sockaddr_un(const char *name, struct sockaddr_un *un, socklen_t *un_len,
-                 int *dirfdp, char linkname[MAX_UN_LEN + 1])
+                 int *dirfdp)
 {
-    char short_name[MAX_UN_LEN + 1];
+    enum { MAX_UN_LEN = sizeof un->sun_path - 1 };
 
     *dirfdp = -1;
-    linkname[0] = '\0';
     if (strlen(name) > MAX_UN_LEN) {
-        /* 'name' is too long to fit in a sockaddr_un.  Try a workaround. */
-        int error = shorten_name_via_proc(name, short_name, dirfdp);
-        if (error == ENAMETOOLONG) {
-            error = shorten_name_via_symlink(name, short_name, linkname);
-        }
-        if (error) {
-            static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 1);
+        static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 1);
+
+        if (LINUX_DATAPATH) {
+            /* 'name' is too long to fit in a sockaddr_un, but we have a
+             * workaround for that on Linux: shorten it by opening a file
+             * descriptor for the directory part of the name and indirecting
+             * through /proc/self/fd/<dirfd>/<basename>. */
+            char *dir, *base;
+            char *short_name;
+            int dirfd;
+
+            dir = dir_name(name);
+            base = base_name(name);
+
+            dirfd = open(dir, O_DIRECTORY | O_RDONLY);
+            if (dirfd < 0) {
+                free(base);
+                free(dir);
+                return errno;
+            }
+
+            short_name = xasprintf("/proc/self/fd/%d/%s", dirfd, base);
+            free(dir);
+            free(base);
+
+            if (strlen(short_name) <= MAX_UN_LEN) {
+                make_sockaddr_un__(short_name, un, un_len);
+                free(short_name);
+                *dirfdp = dirfd;
+                return 0;
+            }
+            free(short_name);
+            close(dirfd);
 
             VLOG_WARN_RL(&rl, "Unix socket name %s is longer than maximum "
-                         "%"PRIuSIZE" bytes", name, MAX_UN_LEN);
-            return error;
+                         "%d bytes (even shortened)", name, MAX_UN_LEN);
+        } else {
+            /* 'name' is too long and we have no workaround. */
+            VLOG_WARN_RL(&rl, "Unix socket name %s is longer than maximum "
+                         "%d bytes", name, MAX_UN_LEN);
         }
 
-        name = short_name;
-    }
-
-    un->sun_family = AF_UNIX;
-    ovs_strzcpy(un->sun_path, name, sizeof un->sun_path);
-    *un_len = (offsetof(struct sockaddr_un, sun_path)
-                + strlen (un->sun_path) + 1);
-    return 0;
-}
-
-/* Clean up after make_sockaddr_un(). */
-static void
-free_sockaddr_un(int dirfd, const char *linkname)
-{
-    if (dirfd >= 0) {
-        close(dirfd);
-    }
-    if (linkname[0]) {
-        fatal_signal_unlink_file_now(linkname);
+        return ENAMETOOLONG;
+    } else {
+        make_sockaddr_un__(name, un, un_len);
+        return 0;
     }
 }
 
@@ -544,42 +416,41 @@ make_unix_socket(int style, bool nonblock,
     }
 
     if (bind_path) {
-        char linkname[MAX_UN_LEN + 1];
         struct sockaddr_un un;
         socklen_t un_len;
         int dirfd;
 
         if (unlink(bind_path) && errno != ENOENT) {
-            VLOG_WARN("unlinking \"%s\": %s\n",
-                      bind_path, ovs_strerror(errno));
+            VLOG_WARN("unlinking \"%s\": %s\n", bind_path, strerror(errno));
         }
         fatal_signal_add_file_to_unlink(bind_path);
 
-        error = make_sockaddr_un(bind_path, &un, &un_len, &dirfd, linkname);
+        error = make_sockaddr_un(bind_path, &un, &un_len, &dirfd);
         if (!error) {
             error = bind_unix_socket(fd, (struct sockaddr *) &un, un_len);
         }
-        free_sockaddr_un(dirfd, linkname);
-
+        if (dirfd >= 0) {
+            close(dirfd);
+        }
         if (error) {
             goto error;
         }
     }
 
     if (connect_path) {
-        char linkname[MAX_UN_LEN + 1];
         struct sockaddr_un un;
         socklen_t un_len;
         int dirfd;
 
-        error = make_sockaddr_un(connect_path, &un, &un_len, &dirfd, linkname);
+        error = make_sockaddr_un(connect_path, &un, &un_len, &dirfd);
         if (!error
             && connect(fd, (struct sockaddr*) &un, un_len)
             && errno != EINPROGRESS) {
             error = errno;
         }
-        free_sockaddr_un(dirfd, linkname);
-
+        if (dirfd >= 0) {
+            close(dirfd);
+        }
         if (error) {
             goto error;
         }
@@ -605,7 +476,6 @@ get_unix_name_len(socklen_t sun_len)
             ? sun_len - offsetof(struct sockaddr_un, sun_path)
             : 0);
 }
-#endif /* _WIN32 */
 
 ovs_be32
 guess_netmask(ovs_be32 ip_)
@@ -617,125 +487,59 @@ guess_netmask(ovs_be32 ip_)
             : htonl(0));                          /* ??? */
 }
 
-/* This is like strsep() except:
- *
- *    - The separator string is ":".
- *
- *    - Square brackets [] quote ":" separators and are removed from the
- *      tokens. */
-static char *
-parse_bracketed_token(char **pp)
-{
-    char *p = *pp;
-
-    if (p == NULL) {
-        return NULL;
-    } else if (*p == '\0') {
-        *pp = NULL;
-        return p;
-    } else if (*p == '[') {
-        char *start = p + 1;
-        char *end = start + strcspn(start, "]");
-        *pp = (*end == '\0' ? NULL
-               : end[1] == ':' ? end + 2
-               : end + 1);
-        *end = '\0';
-        return start;
-    } else {
-        char *start = p;
-        char *end = start + strcspn(start, ":");
-        *pp = *end == '\0' ? NULL : end + 1;
-        *end = '\0';
-        return start;
-    }
-}
-
-static bool
-parse_sockaddr_components(struct sockaddr_storage *ss,
-                          const char *host_s,
-                          const char *port_s, uint16_t default_port,
-                          const char *s)
-{
-    struct sockaddr_in *sin = ALIGNED_CAST(struct sockaddr_in *, ss);
-    int port;
-
-    if (port_s && port_s[0]) {
-        if (!str_to_int(port_s, 10, &port) || port < 0 || port > 65535) {
-            VLOG_ERR("%s: bad port number \"%s\"", s, port_s);
-        }
-    } else {
-        port = default_port;
-    }
-
-    memset(ss, 0, sizeof *ss);
-    if (strchr(host_s, ':')) {
-        struct sockaddr_in6 *sin6
-            = ALIGNED_CAST(struct sockaddr_in6 *, ss);
-
-        sin6->sin6_family = AF_INET6;
-        sin6->sin6_port = htons(port);
-        if (!inet_pton(AF_INET6, host_s, sin6->sin6_addr.s6_addr)) {
-            VLOG_ERR("%s: bad IPv6 address \"%s\"", s, host_s);
-            goto exit;
-        }
-    } else {
-        sin->sin_family = AF_INET;
-        sin->sin_port = htons(port);
-        if (!inet_pton(AF_INET, host_s, &sin->sin_addr.s_addr)) {
-            VLOG_ERR("%s: bad IPv4 address \"%s\"", s, host_s);
-            goto exit;
-        }
-    }
-
-    return true;
-
-exit:
-    memset(ss, 0, sizeof *ss);
-    return false;
-}
-
 /* Parses 'target', which should be a string in the format "<host>[:<port>]".
- * <host>, which is required, may be an IPv4 address or an IPv6 address
- * enclosed in square brackets.  If 'default_port' is nonzero then <port> is
- * optional and defaults to 'default_port'.
+ * <host> is required.  If 'default_port' is nonzero then <port> is optional
+ * and defaults to 'default_port'.
  *
- * On success, returns true and stores the parsed remote address into '*ss'.
- * On failure, logs an error, stores zeros into '*ss', and returns false. */
+ * On success, returns true and stores the parsed remote address into '*sinp'.
+ * On failure, logs an error, stores zeros into '*sinp', and returns false. */
 bool
 inet_parse_active(const char *target_, uint16_t default_port,
-                  struct sockaddr_storage *ss)
+                  struct sockaddr_in *sinp)
 {
     char *target = xstrdup(target_);
-    const char *port;
-    const char *host;
-    char *p;
-    bool ok;
+    char *save_ptr = NULL;
+    const char *host_name;
+    const char *port_string;
+    bool ok = false;
 
-    p = target;
-    host = parse_bracketed_token(&p);
-    port = parse_bracketed_token(&p);
-    if (!host) {
-        VLOG_ERR("%s: host must be specified", target_);
-        ok = false;
-    } else if (!port && !default_port) {
-        VLOG_ERR("%s: port must be specified", target_);
-        ok = false;
-    } else {
-        ok = parse_sockaddr_components(ss, host, port, default_port, target_);
+    /* Defaults. */
+    sinp->sin_family = AF_INET;
+    sinp->sin_port = htons(default_port);
+
+    /* Tokenize. */
+    host_name = strtok_r(target, ":", &save_ptr);
+    port_string = strtok_r(NULL, ":", &save_ptr);
+    if (!host_name) {
+        VLOG_ERR("%s: bad peer name format", target_);
+        goto exit;
     }
+
+    /* Look up IP, port. */
+    if (lookup_ip(host_name, &sinp->sin_addr)) {
+        goto exit;
+    }
+    if (port_string && atoi(port_string)) {
+        sinp->sin_port = htons(atoi(port_string));
+    } else if (!default_port) {
+        VLOG_ERR("%s: port number must be specified", target_);
+        goto exit;
+    }
+
+    ok = true;
+
+exit:
     if (!ok) {
-        memset(ss, 0, sizeof *ss);
+        memset(sinp, 0, sizeof *sinp);
     }
     free(target);
     return ok;
 }
 
-
-/* Opens a non-blocking IPv4 or IPv6 socket of the specified 'style' and
- * connects to 'target', which should be a string in the format
- * "<host>[:<port>]".  <host>, which is required, may be an IPv4 address or an
- * IPv6 address enclosed in square brackets.  If 'default_port' is nonzero then
- * <port> is optional and defaults to 'default_port'.
+/* Opens a non-blocking IPv4 socket of the specified 'style' and connects to
+ * 'target', which should be a string in the format "<host>[:<port>]".  <host>
+ * is required.  If 'default_port' is nonzero then <port> is optional and
+ * defaults to 'default_port'.
  *
  * 'style' should be SOCK_STREAM (for TCP) or SOCK_DGRAM (for UDP).
  *
@@ -744,30 +548,31 @@ inet_parse_active(const char *target_, uint16_t default_port,
  * into '*fdp'.  On failure, returns a positive errno value other than EAGAIN
  * and stores -1 into '*fdp'.
  *
- * If 'ss' is non-null, then on success stores the target address into '*ss'.
+ * If 'sinp' is non-null, then on success the target address is stored into
+ * '*sinp'.
  *
  * 'dscp' becomes the DSCP bits in the IP headers for the new connection.  It
  * should be in the range [0, 63] and will automatically be shifted to the
  * appropriately place in the IP tos field. */
 int
 inet_open_active(int style, const char *target, uint16_t default_port,
-                 struct sockaddr_storage *ssp, int *fdp, uint8_t dscp)
+                 struct sockaddr_in *sinp, int *fdp, uint8_t dscp)
 {
-    struct sockaddr_storage ss;
+    struct sockaddr_in sin;
     int fd = -1;
     int error;
 
     /* Parse. */
-    if (!inet_parse_active(target, default_port, &ss)) {
+    if (!inet_parse_active(target, default_port, &sin)) {
         error = EAFNOSUPPORT;
         goto exit;
     }
 
     /* Create non-blocking socket. */
-    fd = socket(ss.ss_family, style, 0);
+    fd = socket(AF_INET, style, 0);
     if (fd < 0) {
-        error = sock_errno();
-        VLOG_ERR("%s: socket: %s", target, sock_strerror(error));
+        VLOG_ERR("%s: socket: %s", target, strerror(errno));
+        error = errno;
         goto exit;
     }
     error = set_nonblocking(fd);
@@ -775,46 +580,35 @@ inet_open_active(int style, const char *target, uint16_t default_port,
         goto exit;
     }
 
-    /* The dscp bits must be configured before connect() to ensure that the
-     * TOS field is set during the connection establishment.  If set after
+    /* The dscp bits must be configured before connect() to ensure that the TOS
+     * field is set during the connection establishment.  If set after
      * connect(), the handshake SYN frames will be sent with a TOS of 0. */
     error = set_dscp(fd, dscp);
     if (error) {
-        VLOG_ERR("%s: set_dscp: %s", target, sock_strerror(error));
+        VLOG_ERR("%s: socket: %s", target, strerror(error));
         goto exit;
     }
 
     /* Connect. */
-    error = connect(fd, (struct sockaddr *) &ss, ss_length(&ss)) == 0
-                    ? 0
-                    : sock_errno();
-    if (error == EINPROGRESS
-#ifdef _WIN32
-        || error == WSAEALREADY || error == WSAEWOULDBLOCK
-#endif
-        ) {
+    error = connect(fd, (struct sockaddr *) &sin, sizeof sin) == 0 ? 0 : errno;
+    if (error == EINPROGRESS) {
         error = EAGAIN;
     }
 
 exit:
-    if (error && error != EAGAIN) {
-        if (ssp) {
-            memset(ssp, 0, sizeof *ssp);
+    if (!error || error == EAGAIN) {
+        if (sinp) {
+            *sinp = sin;
         }
-        if (fd >= 0) {
-            closesocket(fd);
-            fd = -1;
-        }
-    } else {
-        if (ssp) {
-            *ssp = ss;
-        }
+    } else if (fd >= 0) {
+        close(fd);
+        fd = -1;
     }
     *fdp = fd;
     return error;
 }
 
-/* Parses 'target', which should be a string in the format "[<port>][:<host>]":
+/* Parses 'target', which should be a string in the format "[<port>][:<ip>]":
  *
  *      - If 'default_port' is -1, then <port> is required.  Otherwise, if
  *        <port> is omitted, then 'default_port' is used instead.
@@ -822,41 +616,54 @@ exit:
  *      - If <port> (or 'default_port', if used) is 0, then no port is bound
  *        and the TCP/IP stack will select a port.
  *
- *      - <host> is optional.  If supplied, it may be an IPv4 address or an
- *        IPv6 address enclosed in square brackets.  If omitted, the IP address
- *        is wildcarded.
+ *      - If <ip> is omitted then the IP address is wildcarded.
  *
- * If successful, stores the address into '*ss' and returns true; otherwise
- * zeros '*ss' and returns false. */
+ * If successful, stores the address into '*sinp' and returns true; otherwise
+ * zeros '*sinp' and returns false. */
 bool
 inet_parse_passive(const char *target_, int default_port,
-                   struct sockaddr_storage *ss)
+                   struct sockaddr_in *sinp)
 {
     char *target = xstrdup(target_);
-    const char *port;
-    const char *host;
-    char *p;
-    bool ok;
+    char *string_ptr = target;
+    const char *host_name;
+    const char *port_string;
+    bool ok = false;
+    int port;
 
-    p = target;
-    port = parse_bracketed_token(&p);
-    host = parse_bracketed_token(&p);
-    if (!port && default_port < 0) {
-        VLOG_ERR("%s: port must be specified", target_);
-        ok = false;
-    } else {
-        ok = parse_sockaddr_components(ss, host ? host : "0.0.0.0",
-                                       port, default_port, target_);
+    /* Address defaults. */
+    memset(sinp, 0, sizeof *sinp);
+    sinp->sin_family = AF_INET;
+    sinp->sin_addr.s_addr = htonl(INADDR_ANY);
+    sinp->sin_port = htons(default_port);
+
+    /* Parse optional port number. */
+    port_string = strsep(&string_ptr, ":");
+    if (port_string && str_to_int(port_string, 10, &port)) {
+        sinp->sin_port = htons(port);
+    } else if (default_port < 0) {
+        VLOG_ERR("%s: port number must be specified", target_);
+        goto exit;
     }
+
+    /* Parse optional bind IP. */
+    host_name = strsep(&string_ptr, ":");
+    if (host_name && host_name[0] && lookup_ip(host_name, &sinp->sin_addr)) {
+        goto exit;
+    }
+
+    ok = true;
+
+exit:
     if (!ok) {
-        memset(ss, 0, sizeof *ss);
+        memset(sinp, 0, sizeof *sinp);
     }
     free(target);
     return ok;
 }
 
 
-/* Opens a non-blocking IPv4 or IPv6 socket of the specified 'style', binds to
+/* Opens a non-blocking IPv4 socket of the specified 'style', binds to
  * 'target', and listens for incoming connections.  Parses 'target' in the same
  * way was inet_parse_passive().
  *
@@ -867,30 +674,30 @@ inet_parse_passive(const char *target_, int default_port,
  * On success, returns a non-negative file descriptor.  On failure, returns a
  * negative errno value.
  *
- * If 'ss' is non-null, then on success stores the bound address into '*ss'.
+ * If 'sinp' is non-null, then on success the bound address is stored into
+ * '*sinp'.
  *
  * 'dscp' becomes the DSCP bits in the IP headers for the new connection.  It
  * should be in the range [0, 63] and will automatically be shifted to the
  * appropriately place in the IP tos field. */
 int
 inet_open_passive(int style, const char *target, int default_port,
-                  struct sockaddr_storage *ssp, uint8_t dscp)
+                  struct sockaddr_in *sinp, uint8_t dscp)
 {
     bool kernel_chooses_port;
-    struct sockaddr_storage ss;
+    struct sockaddr_in sin;
     int fd = 0, error;
     unsigned int yes = 1;
 
-    if (!inet_parse_passive(target, default_port, &ss)) {
+    if (!inet_parse_passive(target, default_port, &sin)) {
         return -EAFNOSUPPORT;
     }
-    kernel_chooses_port = ss_get_port(&ss) == 0;
 
     /* Create non-blocking socket, set SO_REUSEADDR. */
-    fd = socket(ss.ss_family, style, 0);
+    fd = socket(AF_INET, style, 0);
     if (fd < 0) {
-        error = sock_errno();
-        VLOG_ERR("%s: socket: %s", target, sock_strerror(error));
+        error = errno;
+        VLOG_ERR("%s: socket: %s", target, strerror(error));
         return -error;
     }
     error = set_nonblocking(fd);
@@ -899,16 +706,15 @@ inet_open_passive(int style, const char *target, int default_port,
     }
     if (style == SOCK_STREAM
         && setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof yes) < 0) {
-        error = sock_errno();
-        VLOG_ERR("%s: setsockopt(SO_REUSEADDR): %s",
-                 target, sock_strerror(error));
+        error = errno;
+        VLOG_ERR("%s: setsockopt(SO_REUSEADDR): %s", target, strerror(error));
         goto error;
     }
 
     /* Bind. */
-    if (bind(fd, (struct sockaddr *) &ss, ss_length(&ss)) < 0) {
-        error = sock_errno();
-        VLOG_ERR("%s: bind: %s", target, sock_strerror(error));
+    if (bind(fd, (struct sockaddr *) &sin, sizeof sin) < 0) {
+        error = errno;
+        VLOG_ERR("%s: bind: %s", target, strerror(error));
         goto error;
     }
 
@@ -917,41 +723,62 @@ inet_open_passive(int style, const char *target, int default_port,
      * connect(), the handshake SYN frames will be sent with a TOS of 0. */
     error = set_dscp(fd, dscp);
     if (error) {
-        VLOG_ERR("%s: set_dscp: %s", target, sock_strerror(error));
+        VLOG_ERR("%s: socket: %s", target, strerror(error));
         goto error;
     }
 
     /* Listen. */
     if (style == SOCK_STREAM && listen(fd, 10) < 0) {
-        error = sock_errno();
-        VLOG_ERR("%s: listen: %s", target, sock_strerror(error));
+        error = errno;
+        VLOG_ERR("%s: listen: %s", target, strerror(error));
         goto error;
     }
 
-    if (ssp || kernel_chooses_port) {
-        socklen_t ss_len = sizeof ss;
-        if (getsockname(fd, (struct sockaddr *) &ss, &ss_len) < 0) {
-            error = sock_errno();
-            VLOG_ERR("%s: getsockname: %s", target, sock_strerror(error));
+    kernel_chooses_port = sin.sin_port == htons(0);
+    if (sinp || kernel_chooses_port) {
+        socklen_t sin_len = sizeof sin;
+        if (getsockname(fd, (struct sockaddr *) &sin, &sin_len) < 0) {
+            error = errno;
+            VLOG_ERR("%s: getsockname: %s", target, strerror(error));
             goto error;
+        }
+        if (sin.sin_family != AF_INET || sin_len != sizeof sin) {
+            error = EAFNOSUPPORT;
+            VLOG_ERR("%s: getsockname: invalid socket name", target);
+            goto error;
+        }
+        if (sinp) {
+            *sinp = sin;
         }
         if (kernel_chooses_port) {
             VLOG_INFO("%s: listening on port %"PRIu16,
-                      target, ss_get_port(&ss));
-        }
-        if (ssp) {
-            *ssp = ss;
+                      target, ntohs(sin.sin_port));
         }
     }
 
     return fd;
 
 error:
-    if (ssp) {
-        memset(ssp, 0, sizeof *ssp);
-    }
-    closesocket(fd);
+    close(fd);
     return -error;
+}
+
+/* Returns a readable and writable fd for /dev/null, if successful, otherwise
+ * a negative errno value.  The caller must not close the returned fd (because
+ * the same fd will be handed out to subsequent callers). */
+int
+get_null_fd(void)
+{
+    static int null_fd = -1;
+    if (null_fd < 0) {
+        null_fd = open("/dev/null", O_RDWR);
+        if (null_fd < 0) {
+            int error = errno;
+            VLOG_ERR("could not open /dev/null: %s", strerror(error));
+            return -error;
+        }
+    }
+    return null_fd;
 }
 
 int
@@ -1003,7 +830,6 @@ int
 fsync_parent_dir(const char *file_name)
 {
     int error = 0;
-#ifndef _WIN32
     char *dir;
     int fd;
 
@@ -1016,16 +842,15 @@ fsync_parent_dir(const char *file_name)
                  * really an error. */
             } else {
                 error = errno;
-                VLOG_ERR("%s: fsync failed (%s)", dir, ovs_strerror(error));
+                VLOG_ERR("%s: fsync failed (%s)", dir, strerror(error));
             }
         }
         close(fd);
     } else {
         error = errno;
-        VLOG_ERR("%s: open failed (%s)", dir, ovs_strerror(error));
+        VLOG_ERR("%s: open failed (%s)", dir, strerror(error));
     }
     free(dir);
-#endif
 
     return error;
 }
@@ -1057,12 +882,11 @@ get_mtime(const char *file_name, struct timespec *mtime)
     }
 }
 
-#ifndef _WIN32
 void
 xpipe(int fds[2])
 {
     if (pipe(fds)) {
-        VLOG_FATAL("failed to create pipe (%s)", ovs_strerror(errno));
+        VLOG_FATAL("failed to create pipe (%s)", strerror(errno));
     }
 }
 
@@ -1073,7 +897,14 @@ xpipe_nonblocking(int fds[2])
     xset_nonblocking(fds[0]);
     xset_nonblocking(fds[1]);
 }
-#endif
+
+void
+xsocketpair(int domain, int type, int protocol, int fds[2])
+{
+    if (socketpair(domain, type, protocol, fds)) {
+        VLOG_FATAL("failed to create socketpair (%s)", strerror(errno));
+    }
+}
 
 static int
 getsockopt_int(int fd, int level, int option, const char *optname, int *valuep)
@@ -1085,11 +916,11 @@ getsockopt_int(int fd, int level, int option, const char *optname, int *valuep)
 
     len = sizeof value;
     if (getsockopt(fd, level, option, &value, &len)) {
-        error = sock_errno();
-        VLOG_ERR_RL(&rl, "getsockopt(%s): %s", optname, sock_strerror(error));
+        error = errno;
+        VLOG_ERR_RL(&rl, "getsockopt(%s): %s", optname, strerror(error));
     } else if (len != sizeof value) {
         error = EINVAL;
-        VLOG_ERR_RL(&rl, "getsockopt(%s): value is %u bytes (expected %"PRIuSIZE")",
+        VLOG_ERR_RL(&rl, "getsockopt(%s): value is %u bytes (expected %zu)",
                     optname, (unsigned int) len, sizeof value);
     } else {
         error = 0;
@@ -1107,13 +938,12 @@ describe_sockaddr(struct ds *string, int fd,
     socklen_t len = sizeof ss;
 
     if (!getaddr(fd, (struct sockaddr *) &ss, &len)) {
-        if (ss.ss_family == AF_INET || ss.ss_family == AF_INET6) {
-            char addrbuf[SS_NTOP_BUFSIZE];
+        if (ss.ss_family == AF_INET) {
+            struct sockaddr_in sin;
 
-            ds_put_format(string, "%s:%"PRIu16,
-                          ss_format_address(&ss, addrbuf, sizeof addrbuf),
-                          ss_get_port(&ss));
-#ifndef _WIN32
+            memcpy(&sin, &ss, sizeof sin);
+            ds_put_format(string, IP_FMT":%"PRIu16,
+                          IP_ARGS(sin.sin_addr.s_addr), ntohs(sin.sin_port));
         } else if (ss.ss_family == AF_UNIX) {
             struct sockaddr_un sun;
             const char *null;
@@ -1124,7 +954,6 @@ describe_sockaddr(struct ds *string, int fd,
             null = memchr(sun.sun_path, '\0', maxlen);
             ds_put_buffer(string, sun.sun_path,
                           null ? null - sun.sun_path : maxlen);
-#endif
         }
 #ifdef HAVE_NETLINK
         else if (ss.ss_family == AF_NETLINK) {
@@ -1156,7 +985,7 @@ describe_sockaddr(struct ds *string, int fd,
             }
         }
 #endif
-#if __linux__
+#if AF_PACKET && LINUX_DATAPATH
         else if (ss.ss_family == AF_PACKET) {
             struct sockaddr_ll sll;
 
@@ -1186,7 +1015,7 @@ describe_sockaddr(struct ds *string, int fd,
 }
 
 
-#ifdef __linux__
+#ifdef LINUX_DATAPATH
 static void
 put_fd_filename(struct ds *string, int fd)
 {
@@ -1215,9 +1044,8 @@ describe_fd(int fd)
     struct stat s;
 
     ds_init(&string);
-#ifndef _WIN32
     if (fstat(fd, &s)) {
-        ds_put_format(&string, "fstat failed (%s)", ovs_strerror(errno));
+        ds_put_format(&string, "fstat failed (%s)", strerror(errno));
     } else if (S_ISSOCK(s.st_mode)) {
         describe_sockaddr(&string, fd, getsockname);
         ds_put_cstr(&string, "<->");
@@ -1231,132 +1059,255 @@ describe_fd(int fd)
                               : S_ISFIFO(s.st_mode) ? "FIFO"
                               : S_ISLNK(s.st_mode) ? "symbolic link"
                               : "unknown"));
-#ifdef __linux__
+#ifdef LINUX_DATAPATH
         put_fd_filename(&string, fd);
 #endif
     }
-#else
-    ds_put_format(&string,"file descriptor");
-#endif /* _WIN32 */
     return ds_steal_cstr(&string);
 }
 
-#ifndef _WIN32
-/* Calls ioctl() on an AF_INET sock, passing the specified 'command' and
- * 'arg'.  Returns 0 if successful, otherwise a positive errno value. */
-int
-af_inet_ioctl(unsigned long int command, const void *arg)
-{
-    static struct ovsthread_once once = OVSTHREAD_ONCE_INITIALIZER;
-    static int sock;
-
-    if (ovsthread_once_start(&once)) {
-        sock = socket(AF_INET, SOCK_DGRAM, 0);
-        if (sock < 0) {
-            int error = sock_errno();
-            VLOG_ERR("failed to create inet socket: %s", sock_strerror(error));
-            sock = -error;
-        }
-        ovsthread_once_done(&once);
-    }
-
-    return (sock < 0 ? -sock
-            : ioctl(sock, command, arg) == -1 ? errno
-            : 0);
-}
-
-int
-af_inet_ifreq_ioctl(const char *name, struct ifreq *ifr, unsigned long int cmd,
-                    const char *cmd_name)
-{
-    int error;
-
-    ovs_strzcpy(ifr->ifr_name, name, sizeof ifr->ifr_name);
-    error = af_inet_ioctl(cmd, ifr);
-    if (error) {
-        static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 20);
-        VLOG_DBG_RL(&rl, "%s: ioctl(%s) failed: %s", name, cmd_name,
-                    ovs_strerror(error));
-    }
-    return error;
-}
-#endif
-
-/* sockaddr_storage helpers. */
-
-/* Returns the IPv4 or IPv6 port in 'ss'. */
-uint16_t
-ss_get_port(const struct sockaddr_storage *ss)
-{
-    if (ss->ss_family == AF_INET) {
-        const struct sockaddr_in *sin
-            = ALIGNED_CAST(const struct sockaddr_in *, ss);
-        return ntohs(sin->sin_port);
-    } else if (ss->ss_family == AF_INET6) {
-        const struct sockaddr_in6 *sin6
-            = ALIGNED_CAST(const struct sockaddr_in6 *, ss);
-        return ntohs(sin6->sin6_port);
-    } else {
-        OVS_NOT_REACHED();
-    }
-}
-
-/* Formats the IPv4 or IPv6 address in 'ss' into the 'bufsize' bytes in 'buf'.
- * If 'ss' is an IPv6 address, puts square brackets around the address.
- * 'bufsize' should be at least SS_NTOP_BUFSIZE.
- *
- * Returns 'buf'. */
-char *
-ss_format_address(const struct sockaddr_storage *ss,
-                  char *buf, size_t bufsize)
-{
-    ovs_assert(bufsize >= SS_NTOP_BUFSIZE);
-    if (ss->ss_family == AF_INET) {
-        const struct sockaddr_in *sin
-            = ALIGNED_CAST(const struct sockaddr_in *, ss);
-
-        snprintf(buf, bufsize, IP_FMT, IP_ARGS(sin->sin_addr.s_addr));
-    } else if (ss->ss_family == AF_INET6) {
-        const struct sockaddr_in6 *sin6
-            = ALIGNED_CAST(const struct sockaddr_in6 *, ss);
-
-        buf[0] = '[';
-        inet_ntop(AF_INET6, sin6->sin6_addr.s6_addr, buf + 1, bufsize - 1);
-        strcpy(strchr(buf, '\0'), "]");
-    } else {
-        OVS_NOT_REACHED();
-    }
-
-    return buf;
-}
-
+/* Returns the total of the 'iov_len' members of the 'n_iovs' in 'iovs'.
+ * The caller must ensure that the total does not exceed SIZE_MAX. */
 size_t
-ss_length(const struct sockaddr_storage *ss)
+iovec_len(const struct iovec iovs[], size_t n_iovs)
 {
-    switch (ss->ss_family) {
-    case AF_INET:
-        return sizeof(struct sockaddr_in);
+    size_t len = 0;
+    size_t i;
 
-    case AF_INET6:
-        return sizeof(struct sockaddr_in6);
+    for (i = 0; i < n_iovs; i++) {
+        len += iovs[i].iov_len;
+    }
+    return len;
+}
 
-    default:
-        OVS_NOT_REACHED();
+/* Returns true if all of the 'n_iovs' iovecs in 'iovs' have length zero. */
+bool
+iovec_is_empty(const struct iovec iovs[], size_t n_iovs)
+{
+    size_t i;
+
+    for (i = 0; i < n_iovs; i++) {
+        if (iovs[i].iov_len) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/* Sends the 'n_iovs' iovecs of data in 'iovs' and the 'n_fds' file descriptors
+ * in 'fds' on Unix domain socket 'sock'.  Returns the number of bytes
+ * successfully sent or -1 if an error occurred.  On error, sets errno
+ * appropriately.  */
+int
+send_iovec_and_fds(int sock,
+                   const struct iovec *iovs, size_t n_iovs,
+                   const int fds[], size_t n_fds)
+{
+    ovs_assert(sock >= 0);
+    if (n_fds > 0) {
+        union {
+            struct cmsghdr cm;
+            char control[CMSG_SPACE(SOUTIL_MAX_FDS * sizeof *fds)];
+        } cmsg;
+        struct msghdr msg;
+
+        ovs_assert(!iovec_is_empty(iovs, n_iovs));
+        ovs_assert(n_fds <= SOUTIL_MAX_FDS);
+
+        memset(&cmsg, 0, sizeof cmsg);
+        cmsg.cm.cmsg_len = CMSG_LEN(n_fds * sizeof *fds);
+        cmsg.cm.cmsg_level = SOL_SOCKET;
+        cmsg.cm.cmsg_type = SCM_RIGHTS;
+        memcpy(CMSG_DATA(&cmsg.cm), fds, n_fds * sizeof *fds);
+
+        msg.msg_name = NULL;
+        msg.msg_namelen = 0;
+        msg.msg_iov = CONST_CAST(struct iovec *, iovs);
+        msg.msg_iovlen = n_iovs;
+        msg.msg_control = &cmsg.cm;
+        msg.msg_controllen = CMSG_SPACE(n_fds * sizeof *fds);
+        msg.msg_flags = 0;
+
+        return sendmsg(sock, &msg, 0);
+    } else {
+        return writev(sock, iovs, n_iovs);
     }
 }
 
-/* For Windows socket calls, 'errno' is not set.  One has to call
- * WSAGetLastError() to get the error number and then pass it to
- * this function to get the correct error string.
+/* Sends the 'n_iovs' iovecs of data in 'iovs' and the 'n_fds' file descriptors
+ * in 'fds' on Unix domain socket 'sock'.  If 'skip_bytes' is nonzero, then the
+ * first 'skip_bytes' of data in the iovecs are not sent, and none of the file
+ * descriptors are sent.  The function continues to retry sending until an
+ * error (other than EINTR) occurs or all the data and fds are sent.
  *
- * ovs_strerror() calls strerror_r() and would not get the correct error
- * string for Windows sockets, but is good for POSIX. */
-const char *
-sock_strerror(int error)
+ * Returns 0 if all the data and fds were successfully sent, otherwise a
+ * positive errno value.  Regardless of success, stores the number of bytes
+ * sent (always at least 'skip_bytes') in '*bytes_sent'.  (If at least one byte
+ * is sent, then all the fds have been sent.)
+ *
+ * 'skip_bytes' must be less than or equal to iovec_len(iovs, n_iovs). */
+int
+send_iovec_and_fds_fully(int sock,
+                         const struct iovec iovs[], size_t n_iovs,
+                         const int fds[], size_t n_fds,
+                         size_t skip_bytes, size_t *bytes_sent)
 {
-#ifdef _WIN32
-    return ovs_format_message(error);
-#else
-    return ovs_strerror(error);
-#endif
+    *bytes_sent = 0;
+    while (n_iovs > 0) {
+        int retval;
+
+        if (skip_bytes) {
+            retval = skip_bytes;
+            skip_bytes = 0;
+        } else if (!*bytes_sent) {
+            retval = send_iovec_and_fds(sock, iovs, n_iovs, fds, n_fds);
+        } else {
+            retval = writev(sock, iovs, n_iovs);
+        }
+
+        if (retval > 0) {
+            *bytes_sent += retval;
+            while (retval > 0) {
+                const uint8_t *base = iovs->iov_base;
+                size_t len = iovs->iov_len;
+
+                if (retval < len) {
+                    size_t sent;
+                    int error;
+
+                    error = write_fully(sock, base + retval, len - retval,
+                                        &sent);
+                    *bytes_sent += sent;
+                    retval += sent;
+                    if (error) {
+                        return error;
+                    }
+                }
+                retval -= len;
+                iovs++;
+                n_iovs--;
+            }
+        } else if (retval == 0) {
+            if (iovec_is_empty(iovs, n_iovs)) {
+                break;
+            }
+            VLOG_WARN("send returned 0");
+            return EPROTO;
+        } else if (errno != EINTR) {
+            return errno;
+        }
+    }
+
+    return 0;
+}
+
+/* Sends the 'n_iovs' iovecs of data in 'iovs' and the 'n_fds' file descriptors
+ * in 'fds' on Unix domain socket 'sock'.  The function continues to retry
+ * sending until an error (other than EAGAIN or EINTR) occurs or all the data
+ * and fds are sent.  Upon EAGAIN, the function blocks until the socket is
+ * ready for more data.
+ *
+ * Returns 0 if all the data and fds were successfully sent, otherwise a
+ * positive errno value. */
+int
+send_iovec_and_fds_fully_block(int sock,
+                               const struct iovec iovs[], size_t n_iovs,
+                               const int fds[], size_t n_fds)
+{
+    size_t sent = 0;
+
+    for (;;) {
+        int error;
+
+        error = send_iovec_and_fds_fully(sock, iovs, n_iovs,
+                                         fds, n_fds, sent, &sent);
+        if (error != EAGAIN) {
+            return error;
+        }
+        poll_fd_wait(sock, POLLOUT);
+        poll_block();
+    }
+}
+
+/* Attempts to receive from Unix domain socket 'sock' up to 'size' bytes of
+ * data into 'data' and up to SOUTIL_MAX_FDS file descriptors into 'fds'.
+ *
+ *      - Upon success, returns the number of bytes of data copied into 'data'
+ *        and stores the number of received file descriptors into '*n_fdsp'.
+ *
+ *      - On failure, returns a negative errno value and stores 0 in
+ *        '*n_fdsp'.
+ *
+ *      - On EOF, returns 0 and stores 0 in '*n_fdsp'. */
+int
+recv_data_and_fds(int sock,
+                  void *data, size_t size,
+                  int fds[SOUTIL_MAX_FDS], size_t *n_fdsp)
+{
+    union {
+        struct cmsghdr cm;
+        char control[CMSG_SPACE(SOUTIL_MAX_FDS * sizeof *fds)];
+    } cmsg;
+    struct msghdr msg;
+    int retval;
+    struct cmsghdr *p;
+    size_t i;
+
+    *n_fdsp = 0;
+
+    do {
+        struct iovec iov;
+
+        iov.iov_base = data;
+        iov.iov_len = size;
+
+        msg.msg_name = NULL;
+        msg.msg_namelen = 0;
+        msg.msg_iov = &iov;
+        msg.msg_iovlen = 1;
+        msg.msg_control = &cmsg.cm;
+        msg.msg_controllen = sizeof cmsg.control;
+        msg.msg_flags = 0;
+
+        retval = recvmsg(sock, &msg, 0);
+    } while (retval < 0 && errno == EINTR);
+    if (retval <= 0) {
+        return retval < 0 ? -errno : 0;
+    }
+
+    for (p = CMSG_FIRSTHDR(&msg); p; p = CMSG_NXTHDR(&msg, p)) {
+        if (p->cmsg_level != SOL_SOCKET || p->cmsg_type != SCM_RIGHTS) {
+            VLOG_ERR("unexpected control message %d:%d",
+                     p->cmsg_level, p->cmsg_type);
+            goto error;
+        } else if (*n_fdsp) {
+            VLOG_ERR("multiple SCM_RIGHTS received");
+            goto error;
+        } else {
+            size_t n_fds = (p->cmsg_len - CMSG_LEN(0)) / sizeof *fds;
+            const int *fds_data = (const int *) CMSG_DATA(p);
+
+            ovs_assert(n_fds > 0);
+            if (n_fds > SOUTIL_MAX_FDS) {
+                VLOG_ERR("%zu fds received but only %d supported",
+                         n_fds, SOUTIL_MAX_FDS);
+                for (i = 0; i < n_fds; i++) {
+                    close(fds_data[i]);
+                }
+                goto error;
+            }
+
+            *n_fdsp = n_fds;
+            memcpy(fds, fds_data, n_fds * sizeof *fds);
+        }
+    }
+
+    return retval;
+
+error:
+    for (i = 0; i < *n_fdsp; i++) {
+        close(fds[i]);
+    }
+    *n_fdsp = 0;
+    return EPROTO;
 }

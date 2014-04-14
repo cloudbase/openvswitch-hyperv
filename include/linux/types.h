@@ -61,4 +61,8 @@ typedef uint64_t __bitwise__ __be64;
 typedef __u32 HANDLE;
 #endif
 
+#ifdef _WIN32
+#undef SWIG
+#endif
+
 #endif /* <linux/types.h> */

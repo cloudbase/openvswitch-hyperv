@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012, 2013 Nicira, Inc.
+ * Copyright (c) 2011, 2012 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -97,23 +97,12 @@ learn_from_openflow(const struct nx_action_learn *nal, struct ofpbuf *ofpacts)
     learn->hard_timeout = ntohs(nal->hard_timeout);
     learn->priority = ntohs(nal->priority);
     learn->cookie = ntohll(nal->cookie);
+    learn->flags = ntohs(nal->flags);
     learn->table_id = nal->table_id;
     learn->fin_idle_timeout = ntohs(nal->fin_idle_timeout);
     learn->fin_hard_timeout = ntohs(nal->fin_hard_timeout);
 
-    /* We only support "send-flow-removed" for now. */
-    switch (ntohs(nal->flags)) {
-    case 0:
-        learn->flags = 0;
-        break;
-    case OFPFF_SEND_FLOW_REM:
-        learn->flags = OFPUTIL_FF_SEND_FLOW_REM;
-        break;
-    default:
-        return OFPERR_OFPBAC_BAD_ARGUMENT;
-    }
-
-    if (learn->table_id == 0xff) {
+    if (learn->flags & ~OFPFF_SEND_FLOW_REM || learn->table_id == 0xff) {
         return OFPERR_OFPBAC_BAD_ARGUMENT;
     }
 
@@ -127,7 +116,7 @@ learn_from_openflow(const struct nx_action_learn *nal, struct ofpbuf *ofpacts)
         }
 
         spec = ofpbuf_put_zeros(ofpacts, sizeof *spec);
-        learn = ofpacts->frame;
+        learn = ofpacts->l2;
         learn->n_specs++;
 
         spec->src_type = header & NX_LEARN_SRC_MASK;
@@ -255,7 +244,7 @@ learn_to_nxast(const struct ofpact_learn *learn, struct ofpbuf *openflow)
     struct nx_action_learn *nal;
     size_t start_ofs;
 
-    start_ofs = ofpbuf_size(openflow);
+    start_ofs = openflow->size;
     nal = ofputil_put_NXAST_LEARN(openflow);
     nal->idle_timeout = htons(learn->idle_timeout);
     nal->hard_timeout = htons(learn->hard_timeout);
@@ -287,12 +276,12 @@ learn_to_nxast(const struct ofpact_learn *learn, struct ofpbuf *openflow)
         }
     }
 
-    if ((ofpbuf_size(openflow) - start_ofs) % 8) {
-        ofpbuf_put_zeros(openflow, 8 - (ofpbuf_size(openflow) - start_ofs) % 8);
+    if ((openflow->size - start_ofs) % 8) {
+        ofpbuf_put_zeros(openflow, 8 - (openflow->size - start_ofs) % 8);
     }
 
     nal = ofpbuf_at_assert(openflow, start_ofs, sizeof *nal);
-    nal->len = htons(ofpbuf_size(openflow) - start_ofs);
+    nal->len = htons(openflow->size - start_ofs);
 }
 
 /* Composes 'fm' so that executing it will implement 'learn' given that the
@@ -314,7 +303,6 @@ learn_execute(const struct ofpact_learn *learn, const struct flow *flow,
     fm->cookie = htonll(0);
     fm->cookie_mask = htonll(0);
     fm->new_cookie = htonll(learn->cookie);
-    fm->modify_cookie = fm->new_cookie != OVS_BE64_MAX;
     fm->table_id = learn->table_id;
     fm->command = OFPFC_MODIFY_STRICT;
     fm->idle_timeout = learn->idle_timeout;
@@ -367,9 +355,9 @@ learn_execute(const struct ofpact_learn *learn, const struct flow *flow,
         case NX_LEARN_DST_OUTPUT:
             if (spec->n_bits <= 16
                 || is_all_zeros(value.u8, sizeof value - 2)) {
-                ofp_port_t port = u16_to_ofp(ntohs(value.be16[7]));
+                uint16_t port = ntohs(value.be16[7]);
 
-                if (ofp_to_u16(port) < ofp_to_u16(OFPP_MAX)
+                if (port < OFPP_MAX
                     || port == OFPP_IN_PORT
                     || port == OFPP_FLOOD
                     || port == OFPP_LOCAL
@@ -382,8 +370,8 @@ learn_execute(const struct ofpact_learn *learn, const struct flow *flow,
     }
     ofpact_pad(ofpacts);
 
-    fm->ofpacts = ofpbuf_data(ofpacts);
-    fm->ofpacts_len = ofpbuf_size(ofpacts);
+    fm->ofpacts = ofpacts->data;
+    fm->ofpacts_len = ofpacts->size;
 }
 
 /* Perform a bitwise-OR on 'wc''s fields that are relevant as sources in
@@ -402,16 +390,13 @@ learn_mask(const struct ofpact_learn *learn, struct flow_wildcards *wc)
     }
 }
 
-/* Returns NULL if successful, otherwise a malloc()'d string describing the
- * error.  The caller is responsible for freeing the returned string. */
-static char * WARN_UNUSED_RESULT
+static void
 learn_parse_load_immediate(const char *s, struct ofpact_learn_spec *spec)
 {
     const char *full_s = s;
     const char *arrow = strstr(s, "->");
     struct mf_subfield dst;
     union mf_subvalue imm;
-    char *error;
 
     memset(&imm, 0, sizeof imm);
     if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X') && arrow) {
@@ -423,7 +408,7 @@ learn_parse_load_immediate(const char *s, struct ofpact_learn_spec *spec)
         for (i = 0; i < n; i++) {
             int hexit = hexit_value(in[-i]);
             if (hexit < 0) {
-                return xasprintf("%s: bad hex digit in value", full_s);
+                ovs_fatal(0, "%s: bad hex digit in value", full_s);
             }
             out[-(i / 2)] |= i % 2 ? hexit << 4 : hexit;
         }
@@ -433,19 +418,19 @@ learn_parse_load_immediate(const char *s, struct ofpact_learn_spec *spec)
     }
 
     if (strncmp(s, "->", 2)) {
-        return xasprintf("%s: missing `->' following value", full_s);
+        ovs_fatal(0, "%s: missing `->' following value", full_s);
     }
     s += 2;
 
-    error = mf_parse_subfield(&dst, s);
-    if (error) {
-        return error;
+    s = mf_parse_subfield(&dst, s);
+    if (*s != '\0') {
+        ovs_fatal(0, "%s: trailing garbage following destination", full_s);
     }
 
     if (!bitwise_is_all_zeros(&imm, sizeof imm, dst.n_bits,
                               (8 * sizeof imm) - dst.n_bits)) {
-        return xasprintf("%s: value does not fit into %u bits",
-                         full_s, dst.n_bits);
+        ovs_fatal(0, "%s: value does not fit into %u bits",
+                  full_s, dst.n_bits);
     }
 
     spec->n_bits = dst.n_bits;
@@ -453,12 +438,9 @@ learn_parse_load_immediate(const char *s, struct ofpact_learn_spec *spec)
     spec->src_imm = imm;
     spec->dst_type = NX_LEARN_DST_LOAD;
     spec->dst = dst;
-    return NULL;
 }
 
-/* Returns NULL if successful, otherwise a malloc()'d string describing the
- * error.  The caller is responsible for freeing the returned string. */
-static char * WARN_UNUSED_RESULT
+static void
 learn_parse_spec(const char *orig, char *name, char *value,
                  struct ofpact_learn_spec *spec)
 {
@@ -469,7 +451,7 @@ learn_parse_spec(const char *orig, char *name, char *value,
 
         error = mf_parse_value(dst, value, &imm);
         if (error) {
-            return error;
+            ovs_fatal(0, "%s", error);
         }
 
         spec->n_bits = dst->n_bits;
@@ -483,23 +465,21 @@ learn_parse_spec(const char *orig, char *name, char *value,
         spec->dst.n_bits = dst->n_bits;
     } else if (strchr(name, '[')) {
         /* Parse destination and check prerequisites. */
-        char *error;
-
-        error = mf_parse_subfield(&spec->dst, name);
-        if (error) {
-            return error;
+        if (mf_parse_subfield(&spec->dst, name)[0] != '\0') {
+            ovs_fatal(0, "%s: syntax error after NXM field name `%s'",
+                      orig, name);
         }
 
         /* Parse source and check prerequisites. */
         if (value[0] != '\0') {
-            error = mf_parse_subfield(&spec->src, value);
-            if (error) {
-                return error;
+            if (mf_parse_subfield(&spec->src, value)[0] != '\0') {
+                ovs_fatal(0, "%s: syntax error after NXM field name `%s'",
+                          orig, value);
             }
             if (spec->src.n_bits != spec->dst.n_bits) {
-                return xasprintf("%s: bit widths of %s (%u) and %s (%u) "
-                                 "differ", orig, name, spec->src.n_bits, value,
-                                 spec->dst.n_bits);
+                ovs_fatal(0, "%s: bit widths of %s (%u) and %s (%u) differ",
+                          orig, name, spec->src.n_bits, value,
+                          spec->dst.n_bits);
             }
         } else {
             spec->src = spec->dst;
@@ -510,18 +490,11 @@ learn_parse_spec(const char *orig, char *name, char *value,
         spec->dst_type = NX_LEARN_DST_MATCH;
     } else if (!strcmp(name, "load")) {
         if (value[strcspn(value, "[-")] == '-') {
-            char *error = learn_parse_load_immediate(value, spec);
-            if (error) {
-                return error;
-            }
+            learn_parse_load_immediate(value, spec);
         } else {
             struct ofpact_reg_move move;
-            char *error;
 
-            error = nxm_parse_reg_move(&move, value);
-            if (error) {
-                return error;
-            }
+            nxm_parse_reg_move(&move, value);
 
             spec->n_bits = move.src.n_bits;
             spec->src_type = NX_LEARN_SRC_FIELD;
@@ -530,29 +503,39 @@ learn_parse_spec(const char *orig, char *name, char *value,
             spec->dst = move.dst;
         }
     } else if (!strcmp(name, "output")) {
-        char *error = mf_parse_subfield(&spec->src, value);
-        if (error) {
-            return error;
+        if (mf_parse_subfield(&spec->src, value)[0] != '\0') {
+            ovs_fatal(0, "%s: syntax error after NXM field name `%s'",
+                      orig, name);
         }
 
         spec->n_bits = spec->src.n_bits;
         spec->src_type = NX_LEARN_SRC_FIELD;
         spec->dst_type = NX_LEARN_DST_OUTPUT;
     } else {
-        return xasprintf("%s: unknown keyword %s", orig, name);
+        ovs_fatal(0, "%s: unknown keyword %s", orig, name);
     }
-
-    return NULL;
 }
 
-/* Returns NULL if successful, otherwise a malloc()'d string describing the
- * error.  The caller is responsible for freeing the returned string. */
-static char * WARN_UNUSED_RESULT
-learn_parse__(char *orig, char *arg, struct ofpbuf *ofpacts)
+/* Parses 'arg' as a set of arguments to the "learn" action and appends a
+ * matching OFPACT_LEARN action to 'ofpacts'.  ovs-ofctl(8) describes the
+ * format parsed.
+ *
+ * Prints an error on stderr and aborts the program if 'arg' syntax is invalid.
+ *
+ * If 'flow' is nonnull, then it should be the flow from a struct match that is
+ * the matching rule for the learning action.  This helps to better validate
+ * the action's arguments.
+ *
+ * Modifies 'arg'. */
+void
+learn_parse(char *arg, const struct flow *flow, struct ofpbuf *ofpacts)
 {
+    char *orig = xstrdup(arg);
+    char *name, *value;
+
     struct ofpact_learn *learn;
     struct match match;
-    char *name, *value;
+    enum ofperr error;
 
     learn = ofpact_put_LEARN(ofpacts);
     learn->idle_timeout = OFP_FLOW_PERMANENT;
@@ -565,8 +548,8 @@ learn_parse__(char *orig, char *arg, struct ofpbuf *ofpacts)
         if (!strcmp(name, "table")) {
             learn->table_id = atoi(value);
             if (learn->table_id == 255) {
-                return xasprintf("%s: table id 255 not valid for `learn' "
-                                 "action", orig);
+                ovs_fatal(0, "%s: table id 255 not valid for `learn' action",
+                          orig);
             }
         } else if (!strcmp(name, "priority")) {
             learn->priority = atoi(value);
@@ -582,15 +565,26 @@ learn_parse__(char *orig, char *arg, struct ofpbuf *ofpacts)
             learn->cookie = strtoull(value, NULL, 0);
         } else {
             struct ofpact_learn_spec *spec;
-            char *error;
 
             spec = ofpbuf_put_zeros(ofpacts, sizeof *spec);
-            learn = ofpacts->frame;
+            learn = ofpacts->l2;
             learn->n_specs++;
 
-            error = learn_parse_spec(orig, name, value, spec);
-            if (error) {
-                return error;
+            learn_parse_spec(orig, name, value, spec);
+
+            /* Check prerequisites. */
+            if (spec->src_type == NX_LEARN_SRC_FIELD
+                && flow && !mf_are_prereqs_ok(spec->src.field, flow)) {
+                ovs_fatal(0, "%s: cannot specify source field %s because "
+                          "prerequisites are not satisfied",
+                          orig, spec->src.field->name);
+            }
+            if ((spec->dst_type == NX_LEARN_DST_MATCH
+                 || spec->dst_type == NX_LEARN_DST_LOAD)
+                && !mf_are_prereqs_ok(spec->dst.field, &match.flow)) {
+                ovs_fatal(0, "%s: cannot specify destination field %s because "
+                          "prerequisites are not satisfied",
+                          orig, spec->dst.field->name);
             }
 
             /* Update 'match' to allow for satisfying destination
@@ -603,28 +597,14 @@ learn_parse__(char *orig, char *arg, struct ofpbuf *ofpacts)
     }
     ofpact_update_len(ofpacts, &learn->ofpact);
 
-    return NULL;
-}
-
-/* Parses 'arg' as a set of arguments to the "learn" action and appends a
- * matching OFPACT_LEARN action to 'ofpacts'.  ovs-ofctl(8) describes the
- * format parsed.
- *
- * Returns NULL if successful, otherwise a malloc()'d string describing the
- * error.  The caller is responsible for freeing the returned string.
- *
- * If 'flow' is nonnull, then it should be the flow from a struct match that is
- * the matching rule for the learning action.  This helps to better validate
- * the action's arguments.
- *
- * Modifies 'arg'. */
-char * WARN_UNUSED_RESULT
-learn_parse(char *arg, struct ofpbuf *ofpacts)
-{
-    char *orig = xstrdup(arg);
-    char *error = learn_parse__(orig, arg, ofpacts);
+    /* In theory the above should have caught any errors, but... */
+    if (flow) {
+        error = learn_check(learn, flow);
+        if (error) {
+            ovs_fatal(0, "%s: %s", orig, ofperr_to_string(error));
+        }
+    }
     free(orig);
-    return error;
 }
 
 /* Appends a description of 'learn' to 's', in the format that ovs-ofctl(8)

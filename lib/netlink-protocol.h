@@ -40,6 +40,7 @@
 #ifdef HAVE_NETLINK
 #include <linux/netlink.h>
 #include <linux/genetlink.h>
+
 #else
 #define NETLINK_GENERIC         16
 

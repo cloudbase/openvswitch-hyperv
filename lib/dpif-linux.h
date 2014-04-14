@@ -22,8 +22,6 @@
 #include <stdint.h>
 #include <linux/openvswitch.h>
 
-#include "flow.h"
-
 struct ofpbuf;
 
 struct dpif_linux_vport {
@@ -32,7 +30,7 @@ struct dpif_linux_vport {
 
     /* ovs_vport header. */
     int dp_ifindex;
-    odp_port_t port_no;                    /* ODPP_NONE if unknown. */
+    uint32_t port_no;                      /* UINT32_MAX if unknown. */
     enum ovs_vport_type type;
 
     /* Attributes.

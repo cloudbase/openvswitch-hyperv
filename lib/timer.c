@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2013 Nicira, Inc.
+ * Copyright (c) 2011 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,15 +32,11 @@ timer_msecs_until_expired(const struct timer *timer)
     }
 }
 
-/* Causes poll_block() to wake when 'timer' expires.
- *
- * ('where' is used in debug logging.  Commonly one would use timer_wait() to
- * automatically provide the caller's source file and line number for
- * 'where'.) */
+/* Causes poll_block() to wake when 'timer' expires. */
 void
-timer_wait_at(const struct timer *timer, const char *where)
+(timer_wait)(const struct timer *timer, const char *where)
 {
     if (timer->t < LLONG_MAX) {
-        poll_timer_wait_until_at(timer->t, where);
+        (poll_timer_wait_until)(timer->t, where);
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008, 2009, 2010, 2011, 2012, 2013, 2014 Nicira, Inc.
+ * Copyright (c) 2008, 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -45,6 +45,11 @@ void vconn_set_allowed_versions(struct vconn *vconn,
 int vconn_get_version(const struct vconn *);
 void vconn_set_recv_any_version(struct vconn *);
 
+ovs_be32 vconn_get_remote_ip(const struct vconn *);
+ovs_be16 vconn_get_remote_port(const struct vconn *);
+ovs_be32 vconn_get_local_ip(const struct vconn *);
+ovs_be16 vconn_get_local_port(const struct vconn *);
+
 int vconn_connect(struct vconn *);
 int vconn_recv(struct vconn *, struct ofpbuf **);
 int vconn_send(struct vconn *, struct ofpbuf *);
@@ -56,8 +61,6 @@ int vconn_transact_multiple_noreply(struct vconn *, struct list *requests,
 
 void vconn_run(struct vconn *);
 void vconn_run_wait(struct vconn *);
-
-int vconn_get_status(const struct vconn *);
 
 int vconn_open_block(const char *name, uint32_t allowed_versions, uint8_t dscp,
                      struct vconn **);

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008, 2010, 2011, 2013 Nicira, Inc.
+ * Copyright (c) 2008, 2010, 2011 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,8 +21,11 @@
 #include <inttypes.h>
 #include "openvswitch/types.h"
 
+#ifdef _WIN32
+#define __CHECKER__ 1
+#endif
+
 #ifndef __CHECKER__
-#ifndef _WIN32
 static inline ovs_be64
 htonll(uint64_t n)
 {
@@ -34,21 +37,12 @@ ntohll(ovs_be64 n)
 {
     return htonl(1) == 1 ? n : ((uint64_t) ntohl(n) << 32) | ntohl(n >> 32);
 }
-#endif /* _WIN32 */
 #else
 /* Making sparse happy with these functions also makes them unreadable, so
  * don't bother to show it their implementations. */
 ovs_be64 htonll(uint64_t);
 uint64_t ntohll(ovs_be64);
 #endif
-
-static inline uint32_t
-uint32_byteswap(uint32_t crc) {
-    return (((crc & 0x000000ff) << 24) |
-            ((crc & 0x0000ff00) <<  8) |
-            ((crc & 0x00ff0000) >>  8) |
-            ((crc & 0xff000000) >> 24));
-}
 
 /* These macros may substitute for htons(), htonl(), and htonll() in contexts
  * where function calls are not allowed, such as case labels.  They should not

@@ -110,7 +110,6 @@ def printCIDLHeader(schemaFile):
         print "\nextern struct ovsdb_idl_column %s_columns[%s_N_COLUMNS];" % (structName, structName.upper())
 
         print '''
-const struct %(s)s *%(s)s_get_for_uuid(const struct ovsdb_idl *, const struct uuid *);
 const struct %(s)s *%(s)s_first(const struct ovsdb_idl *);
 const struct %(s)s *%(s)s_next(const struct %(s)s *);
 #define %(S)s_FOR_EACH(ROW, IDL) \\
@@ -167,8 +166,6 @@ struct %(s)s *%(s)s_insert(struct ovsdb_idl_txn *);
 
     print "\nextern struct ovsdb_idl_class %sidl_class;" % prefix
     print "\nvoid %sinit(void);" % prefix
-
-    print "\nconst char * %sget_db_version(void);" % prefix
     print "\n#endif /* %(prefix)sIDL_HEADER */" % {'prefix': prefix.upper()}
 
 def printEnum(members):
@@ -190,7 +187,6 @@ def printCIDLSource(schemaFile):
 #include <config.h>
 #include %s
 #include <limits.h>
-#include "ovs-thread.h"
 #include "ovsdb-data.h"
 #include "ovsdb-error.h"
 #include "util.h"
@@ -382,12 +378,6 @@ void
 
         # First, next functions.
         print '''
-const struct %(s)s *
-%(s)s_get_for_uuid(const struct ovsdb_idl *idl, const struct uuid *uuid)
-{
-    return %(s)s_cast(ovsdb_idl_get_row_for_uuid(idl, &%(p)stable_classes[%(P)sTABLE_%(T)s], uuid));
-}
-
 const struct %(s)s *
 %(s)s_first(const struct ovsdb_idl *idl)
 {
@@ -653,23 +643,12 @@ void
     if (inited) {
         return;
     }
-    assert_single_threaded();
     inited = true;
 """ % prefix
     for tableName, table in sorted(schema.tables.iteritems()):
         structName = "%s%s" % (prefix, tableName.lower())
         print "    %s_columns_init();" % structName
     print "}"
-
-    print """
-/* Return the schema version.  The caller must not free the returned value. */
-const char *
-%sget_db_version(void)
-{
-    return "%s";
-}
-""" % (prefix, schema.version)
-
 
 
 def ovsdb_escape(string):

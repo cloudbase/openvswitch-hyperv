@@ -1,4 +1,4 @@
-/* Copyright (c) 2008, 2011, 2012, 2013, 2014 The Board of Trustees of The Leland Stanford
+/* Copyright (c) 2008, 2011, 2012 The Board of Trustees of The Leland Stanford
  * Junior University
  *
  * We are making the OpenFlow specification and associated documentation
@@ -32,7 +32,7 @@
  */
 
 /*
- * Copyright (c) 2008-2014 Nicira, Inc.
+ * Copyright (c) 2008, 2009, 2010, 2011 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -64,6 +64,10 @@
 #define OFP_ASSERT BOOST_STATIC_ASSERT
 #endif /* __cplusplus */
 
+#ifdef _WIN32
+#define OFP_ASSERT(EXPR)    
+#endif
+
 /* Version number:
  * Non-experimental versions released: 0x01 0x02
  * Experimental versions released: 0x81 -- 0x99
@@ -75,43 +79,14 @@ enum ofp_version {
     OFP10_VERSION = 0x01,
     OFP11_VERSION = 0x02,
     OFP12_VERSION = 0x03,
-    OFP13_VERSION = 0x04,
-    OFP14_VERSION = 0x05
-
-    /* When we add real support for these versions, add them to the enum so
-     * that we get compiler warnings everywhere we might forget to provide
-     * support.  Until then, keep them as macros to avoid those warnings. */
-#define OFP15_VERSION 0x06
+    OFP13_VERSION = 0x04
 };
-
-/* Vendor (aka experimenter) IDs.
- *
- * These are used in various places in OpenFlow to identify an extension
- * defined by some vendor, as opposed to a standardized part of the core
- * OpenFlow protocol.
- *
- * Vendor IDs whose top 8 bits are 0 hold an Ethernet OUI in their low 24 bits.
- * The Open Networking Foundation assigns vendor IDs whose top 8 bits are
- * nonzero.
- *
- * A few vendor IDs are special:
- *
- *    - OF_VENDOR_ID is not a real vendor ID and does not appear in the
- *      OpenFlow protocol itself.  It can occasionally be useful within Open
- *      vSwitch to identify a standardized part of OpenFlow.
- *
- *    - ONF_VENDOR_ID is being used within the ONF "extensibility" working
- *      group to identify extensions being proposed for standardization.
- */
-#define OF_VENDOR_ID    0
-#define NX_VENDOR_ID    0x00002320 /* Nicira. */
-#define ONF_VENDOR_ID   0x4f4e4600 /* Open Networking Foundation. */
 
 #define OFP_MAX_TABLE_NAME_LEN 32
 #define OFP_MAX_PORT_NAME_LEN  16
 
-#define OFP_OLD_PORT  6633
-#define OFP_PORT  6653
+#define OFP_TCP_PORT  6633
+#define OFP_SSL_PORT  6633
 
 #define OFP_ETH_ALEN 6          /* Bytes in an Ethernet address. */
 
@@ -210,10 +185,19 @@ enum ofp_port_features {
     OFPPF_10GB_FD    = 1 << 6,  /* 10 Gb full-duplex rate support. */
 };
 
+struct ofp_packet_queue {
+    ovs_be32 queue_id;          /* id for the specific queue. */
+    ovs_be16 len;               /* Length in bytes of this queue desc. */
+    uint8_t pad[2];             /* 64-bit alignment. */
+    /* struct ofp_queue_prop_header properties[0]; List of properties.  */
+};
+OFP_ASSERT(sizeof(struct ofp_packet_queue) == 8);
+
 enum ofp_queue_properties {
-    OFPQT_MIN_RATE = 1,          /* Minimum datarate guaranteed. */
-    OFPQT_MAX_RATE = 2,          /* Maximum guaranteed rate. */
-    OFPQT_EXPERIMENTER = 0xffff, /* Experimenter defined property. */
+    OFPQT_NONE = 0,       /* No property defined for queue (default). */
+    OFPQT_MIN_RATE,       /* Minimum datarate guaranteed. */
+                          /* Other types should be added here
+                           * (i.e. max rate, precedence, etc). */
 };
 
 /* Common description for a queue. */
@@ -224,14 +208,13 @@ struct ofp_queue_prop_header {
 };
 OFP_ASSERT(sizeof(struct ofp_queue_prop_header) == 8);
 
-/* Min-Rate and Max-Rate queue property description (OFPQT_MIN and
- * OFPQT_MAX). */
-struct ofp_queue_prop_rate {
-    struct ofp_queue_prop_header prop_header;
+/* Min-Rate queue property description. */
+struct ofp_queue_prop_min_rate {
+    struct ofp_queue_prop_header prop_header; /* prop: OFPQT_MIN, len: 16. */
     ovs_be16 rate;        /* In 1/10 of a percent; >1000 -> disabled. */
     uint8_t pad[6];       /* 64-bit alignment */
 };
-OFP_ASSERT(sizeof(struct ofp_queue_prop_rate) == 16);
+OFP_ASSERT(sizeof(struct ofp_queue_prop_min_rate) == 16);
 
 /* Switch features. */
 struct ofp_switch_features {
@@ -304,7 +287,7 @@ OFP_ASSERT(sizeof(struct ofp_action_vendor_header) == 8);
  * header and any padding used to make the action 64-bit aligned.
  * NB: The length of an action *must* always be a multiple of eight. */
 struct ofp_action_header {
-    ovs_be16 type;                  /* One of OFPAT*. */
+    ovs_be16 type;                  /* One of OFPAT10_*. */
     ovs_be16 len;                   /* Length of action, including this
                                        header.  This is the length of action,
                                        including any padding to make it
@@ -372,7 +355,6 @@ enum ofp_flow_removed_reason {
     OFPRR_HARD_TIMEOUT,         /* Time exceeded hard_timeout. */
     OFPRR_DELETE,               /* Evicted by a DELETE flow mod. */
     OFPRR_GROUP_DELETE,         /* Group was removed. */
-    OFPRR_METER_DELETE,         /* Meter was removed. */
     OFPRR_EVICTION,             /* Switch eviction to free resources. */
 };
 
@@ -441,14 +423,6 @@ enum ofp_group {
     OFPG_ANY        = 0xffffffff   /* Wildcard, for flow stats requests. */
 };
 
-/* Group configuration flags */
-enum ofp_group_capabilities {
-    OFPGFC_SELECT_WEIGHT   = 1 << 0, /* Support weight for select groups */
-    OFPGFC_SELECT_LIVENESS = 1 << 1, /* Support liveness for select groups */
-    OFPGFC_CHAINING        = 1 << 2, /* Support chaining groups */
-    OFPGFC_CHAINING_CHECKS = 1 << 3, /* Check chaining for loops and delete */
-};
-
 enum ofp_hello_elem_type {
     OFPHET_VERSIONBITMAP          = 1, /* Bitmap of version supported. */
 };
@@ -470,29 +444,5 @@ struct ofp_vendor_header {
     /* Vendor-defined arbitrary additional data. */
 };
 OFP_ASSERT(sizeof(struct ofp_vendor_header) == 12);
-
-/* Table numbering. Tables can use any number up to OFPT_MAX. */
-enum ofp_table {
-    /* Last usable table number. */
-    OFPTT_MAX = 0xfe,
-
-    /* Fake tables. */
-    OFPTT_ALL = 0xff         /* Wildcard table used for table config,
-                                flow stats and flow deletes. */
-};
-
-enum ofp_table_config {
-    /* OpenFlow 1.1 and 1.2 defined this field as shown.
-     * OpenFlow 1.3 and later mark this field as deprecated, but have not
-     * reused it for any new purpose. */
-    OFPTC11_TABLE_MISS_CONTROLLER = 0 << 0, /* Send to controller. */
-    OFPTC11_TABLE_MISS_CONTINUE   = 1 << 0, /* Go to next table, like OF1.0. */
-    OFPTC11_TABLE_MISS_DROP       = 2 << 0, /* Drop the packet. */
-    OFPTC11_TABLE_MISS_MASK       = 3 << 0,
-
-    /* OpenFlow 1.4. */
-    OFPTC14_EVICTION              = 1 << 2, /* Allow table to evict flows. */
-    OFPTC14_VACANCY_EVENTS        = 1 << 3, /* Enable vacancy events. */
-};
 
 #endif /* openflow/openflow-common.h */

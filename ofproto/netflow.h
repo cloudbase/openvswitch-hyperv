@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008, 2009, 2010, 2011, 2013 Nicira, Inc.
+ * Copyright (c) 2008, 2009, 2010, 2011 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,6 +28,8 @@
  * accounted.) */
 #define NF_ACTIVE_TIMEOUT_DEFAULT 600
 
+struct ofexpired;
+
 struct netflow_options {
     struct sset collectors;
     uint8_t engine_type;
@@ -36,27 +38,39 @@ struct netflow_options {
     bool add_id_to_iface;
 };
 
-#define NF_OUT_FLOOD OFP_PORT_C(UINT16_MAX)
-#define NF_OUT_MULTI OFP_PORT_C(UINT16_MAX - 1)
-#define NF_OUT_DROP  OFP_PORT_C(UINT16_MAX - 2)
+enum netflow_output_ports {
+    NF_OUT_FLOOD = UINT16_MAX,
+    NF_OUT_MULTI = UINT16_MAX - 1,
+    NF_OUT_DROP = UINT16_MAX - 2
+};
+
+struct netflow_flow {
+    long long int last_expired;   /* Time this flow last timed out. */
+    long long int created;        /* Time flow was created since time out. */
+
+    uint64_t packet_count_off;    /* Packet count at last time out. */
+    uint64_t byte_count_off;      /* Byte count at last time out. */
+
+    uint16_t output_iface;        /* Output interface index. */
+    uint8_t tcp_flags;            /* Bitwise-OR of all TCP flags seen. */
+};
 
 struct netflow *netflow_create(void);
-struct netflow *netflow_ref(const struct netflow *);
-void netflow_unref(struct netflow *);
-bool netflow_exists(void);
-
+void netflow_destroy(struct netflow *);
 int netflow_set_options(struct netflow *, const struct netflow_options *);
-void netflow_expire(struct netflow *, struct flow *);
+void netflow_expire(struct netflow *, struct netflow_flow *,
+                    struct ofexpired *);
 
-void netflow_run(struct netflow *);
+bool netflow_run(struct netflow *);
 void netflow_wait(struct netflow *);
 
 void netflow_mask_wc(struct flow *, struct flow_wildcards *);
 
-void netflow_flow_clear(struct netflow *netflow, struct flow *flow);
-
-void netflow_flow_update(struct netflow *nf, const struct flow *flow,
-                         ofp_port_t output_iface,
-                         const struct dpif_flow_stats *);
+void netflow_flow_init(struct netflow_flow *);
+void netflow_flow_clear(struct netflow_flow *);
+void netflow_flow_update_time(struct netflow *, struct netflow_flow *,
+                              long long int used);
+void netflow_flow_update_flags(struct netflow_flow *, uint8_t tcp_flags);
+bool netflow_active_timeout_expired(struct netflow *, struct netflow_flow *);
 
 #endif /* netflow.h */

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2011, 2012, 2013 Nicira, Inc.
+ * Copyright (c) 2010, 2011, 2012 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -63,7 +63,7 @@ multipath_from_openflow(const struct nx_action_multipath *nam,
         VLOG_WARN_RL(&rl, "unsupported algorithm %d", (int) mp->algorithm);
         return OFPERR_OFPBAC_BAD_ARGUMENT;
     } else if (mp->dst.n_bits < min_n_bits) {
-        VLOG_WARN_RL(&rl, "multipath action requires at least %"PRIuSIZE" bits for "
+        VLOG_WARN_RL(&rl, "multipath action requires at least %zu bits for "
                      "%"PRIu32" links", min_n_bits, n_links);
         return OFPERR_OFPBAC_BAD_ARGUMENT;
     }
@@ -189,20 +189,20 @@ multipath_algorithm(uint32_t hash, enum nx_mp_algorithm algorithm,
         return algorithm_iter_hash(hash, n_links, arg);
     }
 
-    OVS_NOT_REACHED();
+    NOT_REACHED();
 }
 
 /* Parses 's_' as a set of arguments to the "multipath" action and initializes
  * 'mp' accordingly.  ovs-ofctl(8) describes the format parsed.
  *
- * Returns NULL if successful, otherwise a malloc()'d string describing the
- * error.  The caller is responsible for freeing the returned string.*/
-static char * WARN_UNUSED_RESULT
-multipath_parse__(struct ofpact_multipath *mp, const char *s_, char *s)
+ * Prints an error on stderr and aborts the program if 's_' syntax is
+ * invalid. */
+void
+multipath_parse(struct ofpact_multipath *mp, const char *s_)
 {
+    char *s = xstrdup(s_);
     char *save_ptr = NULL;
     char *fields, *basis, *algorithm, *n_links_str, *arg, *dst;
-    char *error;
     int n_links;
 
     fields = strtok_r(s, ", ", &save_ptr);
@@ -212,7 +212,7 @@ multipath_parse__(struct ofpact_multipath *mp, const char *s_, char *s)
     arg = strtok_r(NULL, ", ", &save_ptr);
     dst = strtok_r(NULL, ", ", &save_ptr);
     if (!dst) {
-        return xasprintf("%s: not enough arguments to multipath action", s_);
+        ovs_fatal(0, "%s: not enough arguments to multipath action", s_);
     }
 
     ofpact_init_MULTIPATH(mp);
@@ -221,7 +221,7 @@ multipath_parse__(struct ofpact_multipath *mp, const char *s_, char *s)
     } else if (!strcasecmp(fields, "symmetric_l4")) {
         mp->fields = NX_HASH_FIELDS_SYMMETRIC_L4;
     } else {
-        return xasprintf("%s: unknown fields `%s'", s_, fields);
+        ovs_fatal(0, "%s: unknown fields `%s'", s_, fields);
     }
     mp->basis = atoi(basis);
     if (!strcasecmp(algorithm, "modulo_n")) {
@@ -233,41 +233,24 @@ multipath_parse__(struct ofpact_multipath *mp, const char *s_, char *s)
     } else if (!strcasecmp(algorithm, "iter_hash")) {
         mp->algorithm = NX_MP_ALG_ITER_HASH;
     } else {
-        return xasprintf("%s: unknown algorithm `%s'", s_, algorithm);
+        ovs_fatal(0, "%s: unknown algorithm `%s'", s_, algorithm);
     }
     n_links = atoi(n_links_str);
     if (n_links < 1 || n_links > 65536) {
-        return xasprintf("%s: n_links %d is not in valid range 1 to 65536",
-                         s_, n_links);
+        ovs_fatal(0, "%s: n_links %d is not in valid range 1 to 65536",
+                  s_, n_links);
     }
     mp->max_link = n_links - 1;
     mp->arg = atoi(arg);
 
-    error = mf_parse_subfield(&mp->dst, dst);
-    if (error) {
-        return error;
-    }
+    mf_parse_subfield(&mp->dst, dst);
     if (mp->dst.n_bits < 16 && n_links > (1u << mp->dst.n_bits)) {
-        return xasprintf("%s: %d-bit destination field has %u possible "
-                         "values, less than specified n_links %d",
-                         s_, mp->dst.n_bits, 1u << mp->dst.n_bits, n_links);
+        ovs_fatal(0, "%s: %d-bit destination field has %u possible values, "
+                  "less than specified n_links %d",
+                  s_, mp->dst.n_bits, 1u << mp->dst.n_bits, n_links);
     }
 
-    return NULL;
-}
-
-/* Parses 's_' as a set of arguments to the "multipath" action and initializes
- * 'mp' accordingly.  ovs-ofctl(8) describes the format parsed.
- *
- * Returns NULL if successful, otherwise a malloc()'d string describing the
- * error.  The caller is responsible for freeing the returned string. */
-char * WARN_UNUSED_RESULT
-multipath_parse(struct ofpact_multipath *mp, const char *s_)
-{
-    char *s = xstrdup(s_);
-    char *error = multipath_parse__(mp, s_, s);
     free(s);
-    return error;
 }
 
 /* Appends a description of 'mp' to 's', in the format that ovs-ofctl(8)

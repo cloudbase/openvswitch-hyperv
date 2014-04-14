@@ -1,4 +1,4 @@
-/* Copyright (c) 2008, 2009, 2010, 2011, 2013 Nicira, Inc.
+/* Copyright (c) 2008, 2009, 2010, 2011 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,9 +20,6 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
-#ifdef _WIN32
-#include <Wincrypt.h>
-#endif
 
 #include "socket-util.h"
 #include "vlog.h"
@@ -36,14 +33,13 @@ static const char urandom[] = "/dev/urandom";
 int
 get_entropy(void *buffer, size_t n)
 {
-#ifndef _WIN32
     size_t bytes_read;
     int error;
     int fd;
 
     fd = open(urandom, O_RDONLY);
     if (fd < 0) {
-        VLOG_ERR("%s: open failed (%s)", urandom, ovs_strerror(errno));
+        VLOG_ERR("%s: open failed (%s)", urandom, strerror(errno));
         return errno ? errno : EINVAL;
     }
 
@@ -53,19 +49,6 @@ get_entropy(void *buffer, size_t n)
     if (error) {
         VLOG_ERR("%s: read error (%s)", urandom, ovs_retval_to_string(error));
     }
-#else
-    int error = 0;
-    HCRYPTPROV   crypt_prov = 0;
-
-    CryptAcquireContext(&crypt_prov, NULL, NULL,
-                        PROV_RSA_FULL, CRYPT_VERIFYCONTEXT);
-    if (!CryptGenRandom(crypt_prov, n, buffer)) {
-        VLOG_ERR("CryptGenRandom: read error (%s)", ovs_lasterror_to_string());
-        error = EINVAL;
-    }
-
-    CryptReleaseContext(crypt_prov, 0);
-#endif
     return error;
 }
 

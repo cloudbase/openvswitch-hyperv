@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012, 2013 Nicira, Inc.
+ * Copyright (c) 2012 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,7 +24,7 @@
 /* A heap node, to be embedded inside the data structure in the heap. */
 struct heap_node {
     size_t idx;
-    uint64_t priority;
+    uint32_t priority;
 };
 
 /* A max-heap. */
@@ -43,8 +43,8 @@ static inline size_t heap_count(const struct heap *);
 static inline bool heap_is_empty(const struct heap *);
 
 /* Insertion and deletion. */
-void heap_insert(struct heap *, struct heap_node *, uint64_t priority);
-void heap_change(struct heap *, struct heap_node *, uint64_t priority);
+void heap_insert(struct heap *, struct heap_node *, uint32_t priority);
+void heap_change(struct heap *, struct heap_node *, uint32_t priority);
 void heap_remove(struct heap *, struct heap_node *);
 static inline struct heap_node *heap_pop(struct heap *);
 
@@ -54,8 +54,8 @@ static inline struct heap_node *heap_max(const struct heap *);
 /* The "raw" functions below do not preserve the heap invariants.  After you
  * call them, heap_max() will not necessarily return the right value until you
  * subsequently call heap_rebuild(). */
-void heap_raw_insert(struct heap *, struct heap_node *, uint64_t priority);
-static inline void heap_raw_change(struct heap_node *, uint64_t priority);
+void heap_raw_insert(struct heap *, struct heap_node *, uint32_t priority);
+static inline void heap_raw_change(struct heap_node *, uint32_t priority);
 void heap_raw_remove(struct heap *, struct heap_node *);
 void heap_rebuild(struct heap *);
 
@@ -69,13 +69,13 @@ void heap_rebuild(struct heap *);
 #define HEAP_FOR_EACH(NODE, MEMBER, HEAP)                           \
     for (((HEAP)->n > 0                                             \
           ? ASSIGN_CONTAINER(NODE, (HEAP)->array[1], MEMBER)        \
-          : ((NODE) = NULL, (void) 0));                               \
+          : ((NODE) = NULL, 1));                                    \
          (NODE) != NULL;                                            \
          ((NODE)->MEMBER.idx < (HEAP)->n                            \
           ? ASSIGN_CONTAINER(NODE,                                  \
                              (HEAP)->array[(NODE)->MEMBER.idx + 1], \
                              MEMBER)                                \
-          : ((NODE) = NULL, (void) 0)))
+          : ((NODE) = NULL, 1)))
 
 /* Returns the index of the node that is the parent of the node with the given
  * 'idx' within a heap. */
@@ -155,7 +155,7 @@ heap_pop(struct heap *heap)
  *
  * This takes time O(1). */
 static inline void
-heap_raw_change(struct heap_node *node, uint64_t priority)
+heap_raw_change(struct heap_node *node, uint32_t priority)
 {
     node->priority = priority;
 }

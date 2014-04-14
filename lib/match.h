@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
+ * Copyright (c) 2009, 2010, 2011, 2012 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -38,14 +38,9 @@ void match_init(struct match *,
                 const struct flow *, const struct flow_wildcards *);
 void match_wc_init(struct match *match, const struct flow *flow);
 void match_init_catchall(struct match *);
+void match_init_exact(struct match *, const struct flow *);
 
 void match_zero_wildcarded_fields(struct match *);
-
-void match_set_dp_hash(struct match *, uint32_t value);
-void match_set_dp_hash_masked(struct match *, uint32_t value, uint32_t mask);
-
-void match_set_recirc_id(struct match *, uint32_t value);
-void match_set_recirc_id_masked(struct match *, uint32_t value, uint32_t mask);
 
 void match_set_reg(struct match *, unsigned int reg_idx, uint32_t value);
 void match_set_reg_masked(struct match *, unsigned int reg_idx,
@@ -65,9 +60,8 @@ void match_set_tun_tos(struct match *match, uint8_t tos);
 void match_set_tun_tos_masked(struct match *match, uint8_t tos, uint8_t mask);
 void match_set_tun_flags(struct match *match, uint16_t flags);
 void match_set_tun_flags_masked(struct match *match, uint16_t flags, uint16_t mask);
-void match_set_in_port(struct match *, ofp_port_t ofp_port);
-void match_set_pkt_mark(struct match *, uint32_t pkt_mark);
-void match_set_pkt_mark_masked(struct match *, uint32_t pkt_mark, uint32_t mask);
+void match_set_in_port(struct match *, uint16_t ofp_port);
+void match_set_skb_mark(struct match *, uint32_t skb_mark);
 void match_set_skb_priority(struct match *, uint32_t skb_priority);
 void match_set_dl_type(struct match *, ovs_be16);
 void match_set_dl_src(struct match *, const uint8_t[6]);
@@ -84,21 +78,16 @@ void match_set_vlan_vid(struct match *, ovs_be16);
 void match_set_vlan_vid_masked(struct match *, ovs_be16 vid, ovs_be16 mask);
 void match_set_any_pcp(struct match *);
 void match_set_dl_vlan_pcp(struct match *, uint8_t);
-void match_set_any_mpls_lse(struct match *, int idx);
-void match_set_mpls_lse(struct match *, int idx, ovs_be32);
-void match_set_any_mpls_label(struct match *, int idx);
-void match_set_mpls_label(struct match *, int idx, ovs_be32);
-void match_set_any_mpls_tc(struct match *, int idx);
-void match_set_mpls_tc(struct match *, int idx, uint8_t);
-void match_set_any_mpls_bos(struct match *, int idx);
-void match_set_mpls_bos(struct match *, int idx, uint8_t);
+void match_set_any_mpls_label(struct match *);
+void match_set_mpls_label(struct match *, ovs_be32);
+void match_set_any_mpls_tc(struct match *);
+void match_set_mpls_tc(struct match *, uint8_t);
+void match_set_any_mpls_bos(struct match *);
+void match_set_mpls_bos(struct match *, uint8_t);
 void match_set_tp_src(struct match *, ovs_be16);
-void match_set_mpls_lse(struct match *, int idx, ovs_be32 lse);
 void match_set_tp_src_masked(struct match *, ovs_be16 port, ovs_be16 mask);
 void match_set_tp_dst(struct match *, ovs_be16);
 void match_set_tp_dst_masked(struct match *, ovs_be16 port, ovs_be16 mask);
-void match_set_tcp_flags(struct match *, ovs_be16);
-void match_set_tcp_flags_masked(struct match *, ovs_be16 flags, ovs_be16 mask);
 void match_set_nw_proto(struct match *, uint8_t);
 void match_set_nw_src(struct match *, ovs_be32);
 void match_set_nw_src_masked(struct match *, ovs_be32 ip, ovs_be32 mask);
@@ -134,9 +123,6 @@ void match_set_nd_target_masked(struct match *, const struct in6_addr *,
 bool match_equal(const struct match *, const struct match *);
 uint32_t match_hash(const struct match *, uint32_t basis);
 
-void match_init_hidden_fields(struct match *);
-bool match_has_default_hidden_fields(const struct match *);
-
 void match_format(const struct match *, struct ds *, unsigned int priority);
 char *match_to_string(const struct match *, unsigned int priority);
 void match_print(const struct match *);
@@ -145,15 +131,13 @@ void match_print(const struct match *);
 
 /* A sparse representation of a "struct match".
  *
- * There are two invariants:
+ * This has the same invariant as "struct match", that is, a 1-bit in the
+ * 'flow' must correspond to a 1-bit in 'mask'.
  *
- *   - The same invariant as "struct match", that is, a 1-bit in the 'flow'
- *     must correspond to a 1-bit in 'mask'.
- *
- *   - 'flow' and 'mask' have the same 'map'.  This implies that 'flow' and
- *     'mask' have the same part of "struct flow" at the same offset into
- *     'values', which makes minimatch_matches_flow() faster.
- */
+ * The invariants for the underlying miniflow and minimask are also maintained,
+ * which means that 'flow' and 'mask' can have different 'map's.  In
+ * particular, if the match checks that a given 32-bit field has value 0, then
+ * 'map' will have a 1-bit in 'mask' but a 0-bit in 'flow' for that field. */
 struct minimatch {
     struct miniflow flow;
     struct minimask mask;
@@ -161,18 +145,12 @@ struct minimatch {
 
 void minimatch_init(struct minimatch *, const struct match *);
 void minimatch_clone(struct minimatch *, const struct minimatch *);
-void minimatch_move(struct minimatch *dst, struct minimatch *src);
 void minimatch_destroy(struct minimatch *);
 
 void minimatch_expand(const struct minimatch *, struct match *);
 
 bool minimatch_equal(const struct minimatch *a, const struct minimatch *b);
 uint32_t minimatch_hash(const struct minimatch *, uint32_t basis);
-
-bool minimatch_matches_flow(const struct minimatch *, const struct flow *);
-
-uint32_t minimatch_hash_range(const struct minimatch *,
-                              uint8_t start, uint8_t end, uint32_t *basis);
 
 void minimatch_format(const struct minimatch *, struct ds *,
                       unsigned int priority);

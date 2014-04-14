@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008, 2009, 2010, 2011, 2012, 2013, 2014 Nicira, Inc.
+ * Copyright (c) 2008, 2009, 2010, 2011, 2012 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,10 +25,14 @@
 #include "hash.h"
 #include "list.h"
 #include "poll-loop.h"
+#include "tag.h"
 #include "timeval.h"
 #include "unaligned.h"
 #include "util.h"
 #include "vlan-bitmap.h"
+#include "vlog.h"
+
+VLOG_DEFINE_THIS_MODULE(mac_learning);
 
 COVERAGE_DEFINE(mac_learning_learned);
 COVERAGE_DEFINE(mac_learning_expired);
@@ -45,13 +49,25 @@ static uint32_t
 mac_table_hash(const struct mac_learning *ml, const uint8_t mac[ETH_ADDR_LEN],
                uint16_t vlan)
 {
-    return hash_mac(mac, vlan, ml->secret);
+    unsigned int mac1 = get_unaligned_u32((uint32_t *) mac);
+    unsigned int mac2 = get_unaligned_u16((uint16_t *) (mac + 4));
+    return hash_3words(mac1, mac2 | (vlan << 16), ml->secret);
 }
 
 static struct mac_entry *
 mac_entry_from_lru_node(struct list *list)
 {
     return CONTAINER_OF(list, struct mac_entry, lru_node);
+}
+
+/* Returns a tag that represents that 'mac' is on an unknown port in 'vlan'.
+ * (When we learn where 'mac' is in 'vlan', this allows flows that were
+ * flooded to be revalidated.) */
+static tag_type
+make_unknown_mac_tag(const struct mac_learning *ml,
+                     const uint8_t mac[ETH_ADDR_LEN], uint16_t vlan)
+{
+    return tag_create_deterministic(mac_table_hash(ml, mac, vlan));
 }
 
 static struct mac_entry *
@@ -74,7 +90,6 @@ mac_entry_lookup(const struct mac_learning *ml,
  * and return false. */
 static bool
 get_lru(struct mac_learning *ml, struct mac_entry **e)
-    OVS_REQ_RDLOCK(ml->rwlock)
 {
     if (!list_is_empty(&ml->lrus)) {
         *e = mac_entry_from_lru_node(ml->lrus.next);
@@ -108,27 +123,14 @@ mac_learning_create(unsigned int idle_time)
     ml->flood_vlans = NULL;
     ml->idle_time = normalize_idle_time(idle_time);
     ml->max_entries = MAC_DEFAULT_MAX;
-    ml->need_revalidate = false;
-    ovs_refcount_init(&ml->ref_cnt);
-    ovs_rwlock_init(&ml->rwlock);
     return ml;
 }
 
-struct mac_learning *
-mac_learning_ref(const struct mac_learning *ml_)
-{
-    struct mac_learning *ml = CONST_CAST(struct mac_learning *, ml_);
-    if (ml) {
-        ovs_refcount_ref(&ml->ref_cnt);
-    }
-    return ml;
-}
-
-/* Unreferences (and possibly destroys) MAC learning table 'ml'. */
+/* Destroys MAC learning table 'ml'. */
 void
-mac_learning_unref(struct mac_learning *ml)
+mac_learning_destroy(struct mac_learning *ml)
 {
-    if (ml && ovs_refcount_unref(&ml->ref_cnt) == 1) {
+    if (ml) {
         struct mac_entry *e, *next;
 
         HMAP_FOR_EACH_SAFE (e, next, hmap_node, &ml->table) {
@@ -138,7 +140,6 @@ mac_learning_unref(struct mac_learning *ml)
         hmap_destroy(&ml->table);
 
         bitmap_free(ml->flood_vlans);
-        ovs_rwlock_destroy(&ml->rwlock);
         free(ml);
     }
 }
@@ -231,8 +232,8 @@ mac_learning_insert(struct mac_learning *ml,
         hmap_insert(&ml->table, &e->hmap_node, hash);
         memcpy(e->mac, src_mac, ETH_ADDR_LEN);
         e->vlan = vlan;
+        e->tag = 0;
         e->grat_arp_lock = TIME_MIN;
-        e->port.p = NULL;
     } else {
         list_remove(&e->lru_node);
     }
@@ -244,19 +245,22 @@ mac_learning_insert(struct mac_learning *ml,
     return e;
 }
 
-/* Changes 'e''s tag to a new, randomly selected one.  Causes
- * mac_learning_run() to flag for revalidation the tag that would have been
- * previously used for this entry's MAC and VLAN (either before 'e' was
- * inserted, if it is new, or otherwise before its port was updated.)
+/* Changes 'e''s tag to a new, randomly selected one, and returns the tag that
+ * would have been previously used for this entry's MAC and VLAN (either before
+ * 'e' was inserted, if it is new, or otherwise before its port was updated.)
  *
  * The client should call this function after obtaining a MAC learning entry
  * from mac_learning_insert(), if the entry is either new or if its learned
  * port has changed. */
-void
-mac_learning_changed(struct mac_learning *ml)
+tag_type
+mac_learning_changed(struct mac_learning *ml, struct mac_entry *e)
 {
+    tag_type old_tag = e->tag;
+
     COVERAGE_INC(mac_learning_learned);
-    ml->need_revalidate = true;
+
+    e->tag = tag_create_random();
+    return old_tag ? old_tag : make_unknown_mac_tag(ml, e->mac, e->vlan);
 }
 
 /* Looks up MAC 'dst' for VLAN 'vlan' in 'ml' and returns the associated MAC
@@ -265,7 +269,8 @@ mac_learning_changed(struct mac_learning *ml)
  * '*tag'. */
 struct mac_entry *
 mac_learning_lookup(const struct mac_learning *ml,
-                    const uint8_t dst[ETH_ADDR_LEN], uint16_t vlan)
+                    const uint8_t dst[ETH_ADDR_LEN], uint16_t vlan,
+                    tag_type *tag)
 {
     if (eth_addr_is_multicast(dst)) {
         /* No tag because the treatment of multicast destinations never
@@ -278,7 +283,11 @@ mac_learning_lookup(const struct mac_learning *ml,
     } else {
         struct mac_entry *e = mac_entry_lookup(ml, dst, vlan);
 
-        ovs_assert(e == NULL || e->port.p != NULL);
+        ovs_assert(e == NULL || e->tag != 0);
+        if (tag) {
+            /* Tag either the learned port or the lack thereof. */
+            *tag |= e ? e->tag : make_unknown_mac_tag(ml, dst, vlan);
+        }
         return e;
     }
 }
@@ -297,42 +306,37 @@ mac_learning_expire(struct mac_learning *ml, struct mac_entry *e)
  * is responsible for revalidating any flows that depend on 'ml', if
  * necessary. */
 void
-mac_learning_flush(struct mac_learning *ml)
+mac_learning_flush(struct mac_learning *ml, struct tag_set *tags)
 {
     struct mac_entry *e;
     while (get_lru(ml, &e)){
-        ml->need_revalidate = true;
+        if (tags) {
+            tag_set_add(tags, e->tag);
+        }
         mac_learning_expire(ml, e);
     }
     hmap_shrink(&ml->table);
 }
 
-/* Does periodic work required by 'ml'.  Returns true if something changed that
- * may require flow revalidation. */
-bool
-mac_learning_run(struct mac_learning *ml)
+void
+mac_learning_run(struct mac_learning *ml, struct tag_set *set)
 {
-    bool need_revalidate;
     struct mac_entry *e;
-
     while (get_lru(ml, &e)
            && (hmap_count(&ml->table) > ml->max_entries
                || time_now() >= e->expires)) {
         COVERAGE_INC(mac_learning_expired);
-        ml->need_revalidate = true;
+        if (set) {
+            tag_set_add(set, e->tag);
+        }
         mac_learning_expire(ml, e);
     }
-
-    need_revalidate = ml->need_revalidate;
-    ml->need_revalidate = false;
-    return need_revalidate;
 }
 
 void
 mac_learning_wait(struct mac_learning *ml)
 {
-    if (hmap_count(&ml->table) > ml->max_entries
-        || ml->need_revalidate) {
+    if (hmap_count(&ml->table) > ml->max_entries) {
         poll_immediate_wake();
     } else if (!list_is_empty(&ml->lrus)) {
         struct mac_entry *e = mac_entry_from_lru_node(ml->lrus.next);

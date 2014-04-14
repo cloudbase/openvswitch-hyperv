@@ -7,6 +7,8 @@
 .TH ovsdb\-server 1 "@VERSION@" "Open vSwitch" "Open vSwitch Manual"
 .\" This program's name:
 .ds PN ovsdb\-server
+.\" SSL peer program's name:
+.ds SN ovsdb\-client
 .
 .SH NAME
 ovsdb\-server \- Open vSwitch database server
@@ -17,7 +19,6 @@ ovsdb\-server \- Open vSwitch database server
 [\fB\-\-remote=\fIremote\fR]\&...
 [\fB\-\-run=\fIcommand\fR]
 .so lib/daemon-syn.man
-.so lib/service-syn.man
 .so lib/vlog-syn.man
 .so lib/ssl-syn.man
 .so lib/ssl-bootstrap-syn.man
@@ -44,10 +45,12 @@ Adds \fIremote\fR as a connection method used by \fBovsdb\-server\fR.
 .so ovsdb/remote-passive.man
 .so ovsdb/remote-active.man
 .
-.IP "\fBdb:\fIdb\fB,\fItable\fB,\fIcolumn\fR"
+.IP "\fBdb:\fR[\fIdb\fB,\fR]\fItable\fB,\fIcolumn\fR"
 Reads additional connection methods from \fIcolumn\fR in all of the
-rows in \fItable\fR within \fIdb\fR.  As the contents of \fIcolumn\fR changes,
-\fBovsdb\-server\fR also adds and drops connection methods accordingly.
+rows in \fItable\fR within \fIdb\fR.  (If \fBovsdb\-server\fR is
+providing access to only one database, then \fIdb\fR is optional.)  As
+the contents of \fIcolumn\fR changes, \fBovsdb\-server\fR also adds
+and drops connection methods accordingly.
 .IP
 If \fIcolumn\fR's type is string or set of strings, then the
 connection methods are taken directly from the column.  The connection
@@ -72,10 +75,6 @@ client before sending an inactivity probe message.
 It is an error for \fIcolumn\fR to have another type.
 .RE
 .
-.IP
-To connect or listen on multiple connection methods, use multiple
-\fB\-\-remote\fR options.
-.
 .IP "\fB\-\-run=\fIcommand\fR]"
 Ordinarily \fBovsdb\-server\fR runs forever, or until it is told to
 exit (see \fBRUNTIME MANAGEMENT COMMANDS\fR below).  With this option,
@@ -88,24 +87,20 @@ otherwise, it exits with exit code 1.
 This option can be useful where a database server is needed only to
 run a single command, e.g.:
 .B "ovsdb\-server \-\-remote=punix:socket \-\-run='ovsdb\-client dump unix:socket Open_vSwitch'"
-.IP
-This option is not supported on Windows platform.
 .SS "Daemon Options"
 .ds DD \
 \fBovsdb\-server\fR detaches only after it starts listening on all \
 configured remotes.
 .so lib/daemon.man
-.SS "Service Options"
-.so lib/service.man
 .SS "Logging Options"
 .so lib/vlog.man
 .SS "Public Key Infrastructure Options"
 The options described below for configuring the SSL public key
 infrastructure accept a special syntax for obtaining their
 configuration from the database.  If any of these options is given
-\fBdb:\fIdb\fB,\fItable\fB,\fIcolumn\fR as its argument, then the
+\fBdb:\fR[\fIdb\fB,\fR]\fItable\fB,\fIcolumn\fR as its argument, then the
 actual file name is read from the specified \fIcolumn\fR in \fItable\fR
-within the \fIdb\fR database.  The \fIcolumn\fR must have type
+within the \fBovsdb\-server\fR database.  The \fIcolumn\fR must have type
 string or set of strings.  The first nonempty string in the table is taken
 as the file name.  (This means that ordinarily there should be at most
 one row in \fItable\fR.)
@@ -145,9 +140,9 @@ with an error if \fIremote\fR is not configured as a remote.  This
 command only works with remotes that were named on \fB\-\-remote\fR or
 \fBovsdb\-server/add\-remote\fR, that is, it will not remove remotes
 added indirectly because they were read from the database by
-configuring a \fBdb:\fIdb\fB,\fItable\fB,\fIcolumn\fR remote.
+configuring a \fBdb:\fR[\fIdb\fB,\fR]\fItable\fB,\fIcolumn\fR remote.
 (You can remove a database source with \fBovsdb\-server/remove\-remote
-\fBdb:\fIdb\fB,\fItable\fB,\fIcolumn\fR, but not individual
+\fBdb:\fR[\fIdb\fB,\fR]\fItable\fB,\fIcolumn\fR, but not individual
 remotes found indirectly through the database.)
 .
 .IP "\fBovsdb\-server/list\-remotes"
@@ -155,82 +150,12 @@ Outputs a list of the currently configured remotes named on
 \fB\-\-remote\fR or \fBovsdb\-server/add\-remote\fR, that is, it does
 not list remotes added indirectly because they were read from the
 database by configuring a
-\fBdb:\fIdb\fB,\fItable\fB,\fIcolumn\fR remote.
-.
-.IP "\fBovsdb\-server/add\-db \fIdatabase\fR"
-Adds the \fIdatabase\fR to the running \fBovsdb\-server\fR.  The database
-file must already have been created and initialized using, for example,
-\fBovsdb\-tool create\fR.
-.
-.IP "\fBovsdb\-server/remove\-db \fIdatabase\fR"
-Removes \fIdatabase\fR from the running \fBovsdb\-server\fR.  \fIdatabase\fR
-must be a database name as listed by \fBovsdb-server/list\-dbs\fR.
-.IP
-If a remote has been configured that points to the specified
-\fIdatabase\fR (e.g. \fB\-\-remote=db:\fIdatabase\fB,\fR... on the
-command line), then it will be disabled until another database with
-the same name is added again (with \fBovsdb\-server/add\-db\fR).
-.IP
-Any public key infrastructure options specified through this database
-(e.g. \fB\-\-private\-key=db:\fIdatabase,\fR... on the command line)
-will be disabled until another database with the same name is added
-again (with \fBovsdb\-server/add\-db\fR).
-.
-.IP "\fBovsdb\-server/list\-dbs"
-Outputs a list of the currently configured databases added either through
-the command line or through the \fBovsdb\-server/add\-db\fR command.
+\fBdb:\fR[\fIdb\fB,\fR]\fItable\fB,\fIcolumn\fR remote.
 .
 .so lib/vlog-unixctl.man
 .so lib/memory-unixctl.man
 .so lib/coverage-unixctl.man
-.SH "SPECIFICATIONS"
-.
-.PP
-\fBovsdb\-server\fR implements the Open vSwitch Database (OVSDB)
-protocol specified in RFC 7047, with the following clarifications:
-.
-.IP "3.1. JSON Usage"
-RFC 4627 says that names within a JSON object should be unique.
-The Open vSwitch JSON parser discards all but the last value
-for a name that is specified more than once.
-.
-.IP "3.2. Schema Format"
-RFC 7047 requires the "version" field in <database-schema>.  Current
-versions of \fBovsdb\-server\fR allow it to be omitted (future
-versions are likely to require it).
-.
-.IP "4. Wire Protocol"
-The original OVSDB specifications included the following reason,
-omitted from RFC 7047, to operate JSON-RPC directly over a stream
-instead of over HTTP:
-.
-.RS
-.IP \(bu
-JSON-RPC is a peer-to-peer protocol, but HTTP is a client-server
-protocol, which is a poor match.  Thus, JSON-RPC over HTTP requires
-the client to periodically poll the server to receive server requests.
-.IP \(bu
-HTTP is more complicated than stream connections and doesn't provide
-any corresponding advantage.
-.IP \(bu
-The JSON-RPC specification for HTTP transport is incomplete.
-.RE
-.
-.IP "4.1.5. Monitor"
-For backward compatibility, \fBovsdb\-server\fR currently permits a
-single <monitor-request> to be used instead of an array; it is treated
-as a single-element array.  Future versions of \fBovsdb\-server\fR
-might remove this compatibility feature.
-.IP
-Because the <json-value> parameter is used to match subsequent update
-notifications (see below) to the request, it must be unique among all
-active monitors.  \fBovsdb\-server\fR rejects attempt to create two
-monitors with the same identifier.
-.
-.IP "6. IANA Considerations"
-\fBovsdb\-server\fR currently defaults to its historical port number
-6632.  Future versions will adopt IANA-assigned port 6640 as default.
-
+.so lib/stress-unixctl.man
 .SH "SEE ALSO"
 .
 .BR ovsdb\-tool (1).

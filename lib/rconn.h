@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008, 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
+ * Copyright (c) 2008, 2009, 2010, 2011, 2012 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,7 +21,6 @@
 #include <stdint.h>
 #include <time.h>
 #include "openvswitch/types.h"
-#include "ovs-thread.h"
 
 /* A wrapper around vconn that provides queuing and optionally reliability.
  *
@@ -33,12 +32,6 @@
  * An rconn optionally provides reliable communication, in this sense: the
  * rconn will re-connect, with exponential backoff, when the underlying vconn
  * disconnects.
- *
- *
- * Thread-safety
- * =============
- *
- * Fully thread-safe.
  */
 
 struct vconn;
@@ -83,6 +76,10 @@ bool rconn_is_connected(const struct rconn *);
 bool rconn_is_admitted(const struct rconn *);
 int rconn_failure_duration(const struct rconn *);
 
+ovs_be32 rconn_get_remote_ip(const struct rconn *);
+ovs_be16 rconn_get_remote_port(const struct rconn *);
+ovs_be32 rconn_get_local_ip(const struct rconn *);
+ovs_be16 rconn_get_local_port(const struct rconn *);
 int rconn_get_version(const struct rconn *);
 
 const char *rconn_get_state(const struct rconn *);
@@ -94,19 +91,14 @@ unsigned int rconn_count_txqlen(const struct rconn *);
 
 /* Counts packets and bytes queued into an rconn by a given source. */
 struct rconn_packet_counter {
-    struct ovs_mutex mutex;
-    unsigned int n_packets OVS_GUARDED; /* Number of packets queued. */
-    unsigned int n_bytes OVS_GUARDED;   /* Number of bytes queued. */
-    int ref_cnt OVS_GUARDED;            /* Number of owners. */
+    unsigned int n_packets;     /* Number of packets queued. */
+    unsigned int n_bytes;       /* Number of bytes queued. */
+    int ref_cnt;                /* Number of owners. */
 };
 
 struct rconn_packet_counter *rconn_packet_counter_create(void);
 void rconn_packet_counter_destroy(struct rconn_packet_counter *);
 void rconn_packet_counter_inc(struct rconn_packet_counter *, unsigned n_bytes);
 void rconn_packet_counter_dec(struct rconn_packet_counter *, unsigned n_bytes);
-
-unsigned int rconn_packet_counter_n_packets(
-    const struct rconn_packet_counter *);
-unsigned int rconn_packet_counter_n_bytes(const struct rconn_packet_counter *);
 
 #endif /* rconn.h */

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008, 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
+ * Copyright (c) 2008, 2009, 2010, 2011, 2012 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,6 +22,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include "fatal-signal.h"
+#include "leak-checker.h"
 #include "ofpbuf.h"
 #include "openflow/openflow.h"
 #include "poll-loop.h"
@@ -45,7 +46,7 @@ struct vconn_stream
     int n_packets;
 };
 
-static const struct vconn_class stream_vconn_class;
+static struct vconn_class stream_vconn_class;
 
 static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(10, 25);
 
@@ -64,6 +65,10 @@ vconn_stream_new(struct stream *stream, int connect_status,
     s->txbuf = NULL;
     s->rxbuf = NULL;
     s->n_packets = 0;
+    s->vconn.remote_ip = stream_get_remote_ip(stream);
+    s->vconn.remote_port = stream_get_remote_port(stream);
+    s->vconn.local_ip = stream_get_local_ip(stream);
+    s->vconn.local_port = stream_get_local_port(stream);
     return &s->vconn;
 }
 
@@ -78,7 +83,8 @@ vconn_stream_open(const char *name, uint32_t allowed_versions,
     struct stream *stream;
     int error;
 
-    error = stream_open_with_default_port(name, OFP_OLD_PORT, &stream, dscp);
+    error = stream_open_with_default_ports(name, OFP_TCP_PORT, OFP_SSL_PORT,
+                                           &stream, dscp);
     if (!error) {
         error = stream_connect(stream);
         if (!error || error == EAGAIN) {
@@ -103,7 +109,7 @@ vconn_stream_close(struct vconn *vconn)
     struct vconn_stream *s = vconn_stream_cast(vconn);
 
     if ((vconn->error == EPROTO || s->n_packets < 1) && s->rxbuf) {
-        stream_report_content(ofpbuf_data(s->rxbuf), ofpbuf_size(s->rxbuf), STREAM_OPENFLOW,
+        stream_report_content(s->rxbuf->data, s->rxbuf->size, STREAM_OPENFLOW,
                               THIS_MODULE, vconn_get_name(vconn));
     }
 
@@ -126,14 +132,14 @@ vconn_stream_recv__(struct vconn_stream *s, int rx_len)
     struct ofpbuf *rx = s->rxbuf;
     int want_bytes, retval;
 
-    want_bytes = rx_len - ofpbuf_size(rx);
+    want_bytes = rx_len - rx->size;
     ofpbuf_prealloc_tailroom(rx, want_bytes);
     retval = stream_recv(s->stream, ofpbuf_tail(rx), want_bytes);
     if (retval > 0) {
-        ofpbuf_set_size(rx, ofpbuf_size(rx) + retval);
+        rx->size += retval;
         return retval == want_bytes ? 0 : EAGAIN;
     } else if (retval == 0) {
-        if (ofpbuf_size(rx)) {
+        if (rx->size) {
             VLOG_ERR_RL(&rl, "connection dropped mid-packet");
             return EPROTO;
         }
@@ -156,7 +162,7 @@ vconn_stream_recv(struct vconn *vconn, struct ofpbuf **bufferp)
     }
 
     /* Read ofp_header. */
-    if (ofpbuf_size(s->rxbuf) < sizeof(struct ofp_header)) {
+    if (s->rxbuf->size < sizeof(struct ofp_header)) {
         int retval = vconn_stream_recv__(s, sizeof(struct ofp_header));
         if (retval) {
             return retval;
@@ -164,12 +170,12 @@ vconn_stream_recv(struct vconn *vconn, struct ofpbuf **bufferp)
     }
 
     /* Read payload. */
-    oh = ofpbuf_data(s->rxbuf);
+    oh = s->rxbuf->data;
     rx_len = ntohs(oh->length);
     if (rx_len < sizeof(struct ofp_header)) {
         VLOG_ERR_RL(&rl, "received too-short ofp_header (%d bytes)", rx_len);
         return EPROTO;
-    } else if (ofpbuf_size(s->rxbuf) < rx_len) {
+    } else if (s->rxbuf->size < rx_len) {
         int retval = vconn_stream_recv__(s, rx_len);
         if (retval) {
             return retval;
@@ -199,11 +205,12 @@ vconn_stream_send(struct vconn *vconn, struct ofpbuf *buffer)
         return EAGAIN;
     }
 
-    retval = stream_send(s->stream, ofpbuf_data(buffer), ofpbuf_size(buffer));
-    if (retval == ofpbuf_size(buffer)) {
+    retval = stream_send(s->stream, buffer->data, buffer->size);
+    if (retval == buffer->size) {
         ofpbuf_delete(buffer);
         return 0;
     } else if (retval >= 0 || retval == -EAGAIN) {
+        leak_checker_claim(buffer);
         s->txbuf = buffer;
         if (retval > 0) {
             ofpbuf_pull(buffer, retval);
@@ -225,16 +232,16 @@ vconn_stream_run(struct vconn *vconn)
         return;
     }
 
-    retval = stream_send(s->stream, ofpbuf_data(s->txbuf), ofpbuf_size(s->txbuf));
+    retval = stream_send(s->stream, s->txbuf->data, s->txbuf->size);
     if (retval < 0) {
         if (retval != -EAGAIN) {
-            VLOG_ERR_RL(&rl, "send: %s", ovs_strerror(-retval));
+            VLOG_ERR_RL(&rl, "send: %s", strerror(-retval));
             vconn_stream_clear_txbuf(s);
             return;
         }
     } else if (retval > 0) {
         ofpbuf_pull(s->txbuf, retval);
-        if (!ofpbuf_size(s->txbuf)) {
+        if (!s->txbuf->size) {
             vconn_stream_clear_txbuf(s);
             return;
         }
@@ -277,7 +284,7 @@ vconn_stream_wait(struct vconn *vconn, enum vconn_wait_type wait)
         break;
 
     default:
-        OVS_NOT_REACHED();
+        NOT_REACHED();
     }
 }
 
@@ -289,7 +296,7 @@ struct pvconn_pstream
     struct pstream *pstream;
 };
 
-static const struct pvconn_class pstream_pvconn_class;
+static struct pvconn_class pstream_pvconn_class;
 
 static struct pvconn_pstream *
 pvconn_pstream_cast(struct pvconn *pvconn)
@@ -311,8 +318,8 @@ pvconn_pstream_listen(const char *name, uint32_t allowed_versions,
     struct pstream *pstream;
     int error;
 
-    error = pstream_open_with_default_port(name, OFP_OLD_PORT,
-                                           &pstream, dscp);
+    error = pstream_open_with_default_ports(name, OFP_TCP_PORT, OFP_SSL_PORT,
+                                            &pstream, dscp);
     if (error) {
         return error;
     }
@@ -343,7 +350,7 @@ pvconn_pstream_accept(struct pvconn *pvconn, struct vconn **new_vconnp)
     if (error) {
         if (error != EAGAIN) {
             VLOG_DBG_RL(&rl, "%s: accept: %s",
-                        pstream_get_name(ps->pstream), ovs_strerror(error));
+                        pstream_get_name(ps->pstream), strerror(error));
         }
         return error;
     }
@@ -383,16 +390,16 @@ pvconn_pstream_wait(struct pvconn *pvconn)
             pvconn_pstream_wait                     \
     }
 
-static const struct vconn_class stream_vconn_class = STREAM_INIT("stream");
-static const struct pvconn_class pstream_pvconn_class = PSTREAM_INIT("pstream");
+static struct vconn_class stream_vconn_class = STREAM_INIT("stream");
+static struct pvconn_class pstream_pvconn_class = PSTREAM_INIT("pstream");
 
-const struct vconn_class tcp_vconn_class = STREAM_INIT("tcp");
-const struct pvconn_class ptcp_pvconn_class = PSTREAM_INIT("ptcp");
+struct vconn_class tcp_vconn_class = STREAM_INIT("tcp");
+struct pvconn_class ptcp_pvconn_class = PSTREAM_INIT("ptcp");
 
-const struct vconn_class unix_vconn_class = STREAM_INIT("unix");
-const struct pvconn_class punix_pvconn_class = PSTREAM_INIT("punix");
+struct vconn_class unix_vconn_class = STREAM_INIT("unix");
+struct pvconn_class punix_pvconn_class = PSTREAM_INIT("punix");
 
 #ifdef HAVE_OPENSSL
-const struct vconn_class ssl_vconn_class = STREAM_INIT("ssl");
-const struct pvconn_class pssl_pvconn_class = PSTREAM_INIT("pssl");
+struct vconn_class ssl_vconn_class = STREAM_INIT("ssl");
+struct pvconn_class pssl_pvconn_class = PSTREAM_INIT("pssl");
 #endif

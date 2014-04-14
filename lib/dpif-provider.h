@@ -127,10 +127,10 @@ struct dpif_class {
      * port number.  Returns EBUSY if caller attempted to choose a port
      * number, and it was in use. */
     int (*port_add)(struct dpif *dpif, struct netdev *netdev,
-                    odp_port_t *port_no);
+                    uint32_t *port_no);
 
     /* Removes port numbered 'port_no' from 'dpif'. */
-    int (*port_del)(struct dpif *dpif, odp_port_t port_no);
+    int (*port_del)(struct dpif *dpif, uint32_t port_no);
 
     /* Queries 'dpif' for a port with the given 'port_no' or 'devname'.
      * If 'port' is not null, stores information about the port into
@@ -139,23 +139,18 @@ struct dpif_class {
      * If 'port' is not null, the caller takes ownership of data in
      * 'port' and must free it with dpif_port_destroy() when it is no
      * longer needed. */
-    int (*port_query_by_number)(const struct dpif *dpif, odp_port_t port_no,
+    int (*port_query_by_number)(const struct dpif *dpif, uint32_t port_no,
                                 struct dpif_port *port);
     int (*port_query_by_name)(const struct dpif *dpif, const char *devname,
                               struct dpif_port *port);
 
+    /* Returns one greater than the largest port number accepted in flow
+     * actions. */
+    int (*get_max_ports)(const struct dpif *dpif);
+
     /* Returns the Netlink PID value to supply in OVS_ACTION_ATTR_USERSPACE
      * actions as the OVS_USERSPACE_ATTR_PID attribute's value, for use in
-     * flows whose packets arrived on port 'port_no'.  In the case where the
-     * provider allocates multiple Netlink PIDs to a single port, it may use
-     * 'hash' to spread load among them.  The caller need not use a particular
-     * hash function; a 5-tuple hash is suitable.
-     *
-     * (The datapath implementation might use some different hash function for
-     * distributing packets received via flow misses among PIDs.  This means
-     * that packets received via flow misses might be reordered relative to
-     * packets received via userspace actions.  This is not ordinarily a
-     * problem.)
+     * flows whose packets arrived on port 'port_no'.
      *
      * A 'port_no' of UINT32_MAX should be treated as a special case.  The
      * implementation should return a reserved PID, not allocated to any port,
@@ -167,8 +162,7 @@ struct dpif_class {
      *
      * A dpif provider that doesn't have meaningful Netlink PIDs can use NULL
      * for this function.  This is equivalent to always returning 0. */
-    uint32_t (*port_get_pid)(const struct dpif *dpif, odp_port_t port_no,
-                             uint32_t hash);
+    uint32_t (*port_get_pid)(const struct dpif *dpif, uint32_t port_no);
 
     /* Attempts to begin dumping the ports in a dpif.  On success, returns 0
      * and initializes '*statep' with any data needed for iteration.  On
@@ -272,28 +266,18 @@ struct dpif_class {
      * packets. */
     int (*flow_flush)(struct dpif *dpif);
 
-    /* Allocates thread-local state for use with the function 'flow_dump_next'.
-     * On return, initializes '*statep' with any private data needed for
-     * iteration. */
-    void (*flow_dump_state_init)(void **statep);
-
     /* Attempts to begin dumping the flows in a dpif.  On success, returns 0
-     * and initializes '*iterp' with any shared data needed for iteration.
-     * On failure, returns a positive errno value. */
-    int (*flow_dump_start)(const struct dpif *dpif, void **iterp);
+     * and initializes '*statep' with any data needed for iteration.  On
+     * failure, returns a positive errno value. */
+    int (*flow_dump_start)(const struct dpif *dpif, void **statep);
 
-    /* Attempts to retrieve another flow from 'dpif' for 'iter', using
-     * 'state' for storage. 'iter' must have been initialized by a successful
-     * call to the 'flow_dump_start' function for 'dpif'. 'state' must have
-     * been initialised with a call to the 'flow_dump_state_init' function for
-     * 'dpif.
-     *
-     * On success, updates the output parameters as described below and returns
-     * 0. Returns EOF if the end of the flow table has been reached, or a
-     * positive errno value on error. Multiple threads may use the same 'dpif'
-     * and 'iter' with this function, but all other parameters must be
-     * different for each thread. If this function returns non-zero,
-     * subsequent calls with the same arguments will also return non-zero.
+    /* Attempts to retrieve another flow from 'dpif' for 'state', which was
+     * initialized by a successful call to the 'flow_dump_start' function for
+     * 'dpif'.  On success, updates the output parameters as described below
+     * and returns 0.  Returns EOF if the end of the flow table has been
+     * reached, or a positive errno value on error.  This function will not be
+     * called again once it returns nonzero within a given iteration (but the
+     * 'flow_dump_done' function will be called afterward).
      *
      * On success:
      *
@@ -315,41 +299,24 @@ struct dpif_class {
      * All of the returned data is owned by 'dpif', not by the caller, and the
      * caller must not modify or free it.  'dpif' must guarantee that it
      * remains accessible and unchanging until at least the next call to
-     * 'flow_dump_next' or 'flow_dump_done' for 'iter' and 'state'. */
-    int (*flow_dump_next)(const struct dpif *dpif, void *iter, void *state,
+     * 'flow_dump_next' or 'flow_dump_done' for 'state'. */
+    int (*flow_dump_next)(const struct dpif *dpif, void *state,
                           const struct nlattr **key, size_t *key_len,
                           const struct nlattr **mask, size_t *mask_len,
                           const struct nlattr **actions, size_t *actions_len,
                           const struct dpif_flow_stats **stats);
 
-    /* Determines whether the next call to 'flow_dump_next' with 'state' will
-     * modify or free the keys that it previously returned. 'state' must have
-     * been initialized by a call to 'flow_dump_state_init' for 'dpif'.
-     *
-     * 'dpif' guarantees that data returned by flow_dump_next() will remain
-     * accessible and unchanging until the next call. This function provides a
-     * way for callers to determine whether that guarantee extends beyond the
-     * next call.
-     *
-     * Returns true if the next call to flow_dump_next() is expected to be
-     * destructive to previously returned keys for 'state', false otherwise. */
-    bool (*flow_dump_next_may_destroy_keys)(void *state);
-
-    /* Releases resources from 'dpif' for 'iter', which was initialized by a
-     * successful call to the 'flow_dump_start' function for 'dpif'. Callers
-     * must ensure that this function is called once within a given iteration,
-     * as the final flow dump operation. */
-    int (*flow_dump_done)(const struct dpif *dpif, void *iter);
-
-    /* Releases 'state' which was initialized by a call to the
-     * 'flow_dump_state_init' function for this 'dpif'. */
-    void (*flow_dump_state_uninit)(void *statep);
+    /* Releases resources from 'dpif' for 'state', which was initialized by a
+     * successful call to the 'flow_dump_start' function for 'dpif'.  */
+    int (*flow_dump_done)(const struct dpif *dpif, void *state);
 
     /* Performs the 'execute->actions_len' bytes of actions in
-     * 'execute->actions' on the Ethernet frame in 'execute->packet'
-     * and on the packet metadata in 'execute->md'.
-     * May modify both packet and metadata. */
-    int (*execute)(struct dpif *dpif, struct dpif_execute *execute);
+     * 'execute->actions' on the Ethernet frame specified in 'execute->packet'
+     * taken from the flow specified in the 'execute->key_len' bytes of
+     * 'execute->key'.  ('execute->key' is mostly redundant with
+     * 'execute->packet', but it contains some metadata that cannot be
+     * recovered from 'execute->packet', such as tunnel and in_port.) */
+    int (*execute)(struct dpif *dpif, const struct dpif_execute *execute);
 
     /* Executes each of the 'n_ops' operations in 'ops' on 'dpif', in the order
      * in which they are specified, placing each operation's results in the
@@ -365,62 +332,29 @@ struct dpif_class {
      * updating flows as necessary if it does this. */
     int (*recv_set)(struct dpif *dpif, bool enable);
 
-    /* Refreshes the poll loops and Netlink sockets associated to each port,
-     * when the number of upcall handlers (upcall receiving thread) is changed
-     * to 'n_handlers' and receiving packets for 'dpif' is enabled by
-     * recv_set().
-     *
-     * Since multiple upcall handlers can read upcalls simultaneously from
-     * 'dpif', each port can have multiple Netlink sockets, one per upcall
-     * handler.  So, handlers_set() is responsible for the following tasks:
-     *
-     *    When receiving upcall is enabled, extends or creates the
-     *    configuration to support:
-     *
-     *        - 'n_handlers' Netlink sockets for each port.
-     *
-     *        - 'n_handlers' poll loops, one for each upcall handler.
-     *
-     *        - registering the Netlink sockets for the same upcall handler to
-     *          the corresponding poll loop.
-     * */
-    int (*handlers_set)(struct dpif *dpif, uint32_t n_handlers);
-
     /* Translates OpenFlow queue ID 'queue_id' (in host byte order) into a
      * priority value used for setting packet priority. */
     int (*queue_to_priority)(const struct dpif *dpif, uint32_t queue_id,
                              uint32_t *priority);
 
-    /* Polls for an upcall from 'dpif' for an upcall handler.  Since there
-     * can be multiple poll loops (see ->handlers_set()), 'handler_id' is
-     * needed as index to identify the corresponding poll loop.  If
-     * successful, stores the upcall into '*upcall', using 'buf' for
-     * storage.  Should only be called if 'recv_set' has been used to enable
-     * receiving packets from 'dpif'.
+    /* Polls for an upcall from 'dpif'.  If successful, stores the upcall into
+     * '*upcall', using 'buf' for storage.  Should only be called if 'recv_set'
+     * has been used to enable receiving packets from 'dpif'.
      *
-     * The implementation should point 'upcall->key' and 'upcall->userdata'
-     * (if any) into data in the caller-provided 'buf'.  The implementation may
-     * also use 'buf' for storing the data of 'upcall->packet'.  If necessary
-     * to make room, the implementation may reallocate the data in 'buf'.
-     *
-     * The caller owns the data of 'upcall->packet' and may modify it.  If
-     * packet's headroom is exhausted as it is manipulated, 'upcall->packet'
-     * will be reallocated.  This requires the data of 'upcall->packet' to be
-     * released with ofpbuf_uninit() before 'upcall' is destroyed.  However,
-     * when an error is returned, the 'upcall->packet' may be uninitialized
-     * and should not be released.
+     * The implementation should point 'upcall->packet' and 'upcall->key' into
+     * data in the caller-provided 'buf'.  If necessary to make room, the
+     * implementation may expand the data in 'buf'.  (This is hardly a great
+     * way to do things but it works out OK for the dpif providers that exist
+     * so far.)
      *
      * This function must not block.  If no upcall is pending when it is
      * called, it should return EAGAIN without blocking. */
-    int (*recv)(struct dpif *dpif, uint32_t handler_id,
-                struct dpif_upcall *upcall, struct ofpbuf *buf);
+    int (*recv)(struct dpif *dpif, struct dpif_upcall *upcall,
+                struct ofpbuf *buf);
 
-    /* Arranges for the poll loop for an upcall handler to wake up when 'dpif'
-     * has a message queued to be received with the recv member functions.
-     * Since there can be multiple poll loops (see ->handlers_set()),
-     * 'handler_id' is needed as index to identify the corresponding poll loop.
-     * */
-    void (*recv_wait)(struct dpif *dpif, uint32_t handler_id);
+    /* Arranges for the poll loop to wake up when 'dpif' has a message queued
+     * to be received with the recv member function. */
+    void (*recv_wait)(struct dpif *dpif);
 
     /* Throws away any queued upcalls that 'dpif' currently has ready to
      * return. */

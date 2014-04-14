@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009, 2010, 2011, 2012, 2013, 2014 Nicira, Inc.
+ * Copyright (c) 2009, 2010, 2011, 2012 Nicira, Inc.
  * Copyright (c) 2009 InMon Corp.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -42,13 +42,11 @@
 
 VLOG_DEFINE_THIS_MODULE(sflow);
 
-static struct ovs_mutex mutex;
-
 struct dpif_sflow_port {
     struct hmap_node hmap_node; /* In struct dpif_sflow's "ports" hmap. */
     SFLDataSource_instance dsi; /* sFlow library's notion of port number. */
     struct ofport *ofport;      /* To retrive port stats. */
-    odp_port_t odp_port;
+    uint32_t odp_port;
 };
 
 struct dpif_sflow {
@@ -59,7 +57,6 @@ struct dpif_sflow {
     size_t n_flood, n_all;
     struct hmap ports;          /* Contains "struct dpif_sflow_port"s. */
     uint32_t probability;
-    struct ovs_refcount ref_cnt;
 };
 
 static void dpif_sflow_del_port__(struct dpif_sflow *,
@@ -145,13 +142,12 @@ sflow_agent_send_packet_cb(void *ds_, SFLAgent *agent OVS_UNUSED,
 }
 
 static struct dpif_sflow_port *
-dpif_sflow_find_port(const struct dpif_sflow *ds, odp_port_t odp_port)
-    OVS_REQUIRES(mutex)
+dpif_sflow_find_port(const struct dpif_sflow *ds, uint32_t odp_port)
 {
     struct dpif_sflow_port *dsp;
 
-    HMAP_FOR_EACH_IN_BUCKET (dsp, hmap_node, hash_odp_port(odp_port),
-                             &ds->ports) {
+    HMAP_FOR_EACH_IN_BUCKET (dsp, hmap_node,
+                             hash_int(odp_port, 0), &ds->ports) {
         if (dsp->odp_port == odp_port) {
             return dsp;
         }
@@ -162,7 +158,6 @@ dpif_sflow_find_port(const struct dpif_sflow *ds, odp_port_t odp_port)
 static void
 sflow_agent_get_counters(void *ds_, SFLPoller *poller,
                          SFL_COUNTERS_SAMPLE_TYPE *cs)
-    OVS_REQUIRES(mutex)
 {
     struct dpif_sflow *ds = ds_;
     SFLCounters_sample_element elem;
@@ -172,7 +167,7 @@ sflow_agent_get_counters(void *ds_, SFLPoller *poller,
     struct netdev_stats stats;
     enum netdev_flags flags;
 
-    dsp = dpif_sflow_find_port(ds, u32_to_odp(poller->bridgePort));
+    dsp = dpif_sflow_find_port(ds, poller->bridgePort);
     if (!dsp) {
         return;
     }
@@ -253,16 +248,13 @@ sflow_choose_agent_address(const char *agent_device,
     }
 
     SSET_FOR_EACH (target, targets) {
-        struct sockaddr_storage ss;
+        struct sockaddr_in sin;
         char name[IFNAMSIZ];
 
-        if (inet_parse_active(target, SFL_DEFAULT_COLLECTOR_PORT, &ss)
-            && ss.ss_family == AF_INET) {
-            struct sockaddr_in *sin = (struct sockaddr_in *) &ss;
-            if (route_table_get_name(sin->sin_addr.s_addr, name)
-                && !netdev_get_in4_by_name(name, &in4)) {
-                goto success;
-            }
+        if (inet_parse_active(target, SFL_DEFAULT_COLLECTOR_PORT, &sin)
+            && route_table_get_name(sin.sin_addr.s_addr, name)
+            && !netdev_get_in4_by_name(name, &in4)) {
+            goto success;
         }
     }
 
@@ -278,12 +270,11 @@ success:
     return true;
 }
 
-static void
-dpif_sflow_clear__(struct dpif_sflow *ds) OVS_REQUIRES(mutex)
+void
+dpif_sflow_clear(struct dpif_sflow *ds)
 {
     if (ds->sflow_agent) {
         sfl_agent_release(ds->sflow_agent);
-        free(ds->sflow_agent);
         ds->sflow_agent = NULL;
     }
     collectors_destroy(ds->collectors);
@@ -295,53 +286,23 @@ dpif_sflow_clear__(struct dpif_sflow *ds) OVS_REQUIRES(mutex)
     ds->probability = 0;
 }
 
-void
-dpif_sflow_clear(struct dpif_sflow *ds) OVS_EXCLUDED(mutex)
-{
-    ovs_mutex_lock(&mutex);
-    dpif_sflow_clear__(ds);
-    ovs_mutex_unlock(&mutex);
-}
-
 bool
-dpif_sflow_is_enabled(const struct dpif_sflow *ds) OVS_EXCLUDED(mutex)
+dpif_sflow_is_enabled(const struct dpif_sflow *ds)
 {
-    bool enabled;
-
-    ovs_mutex_lock(&mutex);
-    enabled = ds->collectors != NULL;
-    ovs_mutex_unlock(&mutex);
-    return enabled;
+    return ds->collectors != NULL;
 }
 
 struct dpif_sflow *
 dpif_sflow_create(void)
 {
-    static struct ovsthread_once once = OVSTHREAD_ONCE_INITIALIZER;
     struct dpif_sflow *ds;
-
-    if (ovsthread_once_start(&once)) {
-        ovs_mutex_init_recursive(&mutex);
-        ovsthread_once_done(&once);
-    }
 
     ds = xcalloc(1, sizeof *ds);
     ds->next_tick = time_now() + 1;
     hmap_init(&ds->ports);
     ds->probability = 0;
     route_table_register();
-    ovs_refcount_init(&ds->ref_cnt);
 
-    return ds;
-}
-
-struct dpif_sflow *
-dpif_sflow_ref(const struct dpif_sflow *ds_)
-{
-    struct dpif_sflow *ds = CONST_CAST(struct dpif_sflow *, ds_);
-    if (ds) {
-        ovs_refcount_ref(&ds->ref_cnt);
-    }
     return ds;
 }
 
@@ -349,19 +310,15 @@ dpif_sflow_ref(const struct dpif_sflow *ds_)
  * a value of %UINT32_MAX samples all packets and intermediate values sample
  * intermediate fractions of packets. */
 uint32_t
-dpif_sflow_get_probability(const struct dpif_sflow *ds) OVS_EXCLUDED(mutex)
+dpif_sflow_get_probability(const struct dpif_sflow *ds)
 {
-    uint32_t probability;
-    ovs_mutex_lock(&mutex);
-    probability = ds->probability;
-    ovs_mutex_unlock(&mutex);
-    return probability;
+    return ds->probability;
 }
 
 void
-dpif_sflow_unref(struct dpif_sflow *ds) OVS_EXCLUDED(mutex)
+dpif_sflow_destroy(struct dpif_sflow *ds)
 {
-    if (ds && ovs_refcount_unref(&ds->ref_cnt) == 1) {
+    if (ds) {
         struct dpif_sflow_port *dsp, *next;
 
         route_table_unregister();
@@ -376,30 +333,28 @@ dpif_sflow_unref(struct dpif_sflow *ds) OVS_EXCLUDED(mutex)
 
 static void
 dpif_sflow_add_poller(struct dpif_sflow *ds, struct dpif_sflow_port *dsp)
-    OVS_REQUIRES(mutex)
 {
     SFLPoller *poller = sfl_agent_addPoller(ds->sflow_agent, &dsp->dsi, ds,
                                             sflow_agent_get_counters);
     sfl_poller_set_sFlowCpInterval(poller, ds->options->polling_interval);
     sfl_poller_set_sFlowCpReceiver(poller, RECEIVER_INDEX);
-    sfl_poller_set_bridgePort(poller, odp_to_u32(dsp->odp_port));
+    sfl_poller_set_bridgePort(poller, dsp->odp_port);
 }
 
 void
 dpif_sflow_add_port(struct dpif_sflow *ds, struct ofport *ofport,
-                    odp_port_t odp_port) OVS_EXCLUDED(mutex)
+                    uint32_t odp_port)
 {
     struct dpif_sflow_port *dsp;
     int ifindex;
 
-    ovs_mutex_lock(&mutex);
     dpif_sflow_del_port(ds, odp_port);
 
     ifindex = netdev_get_ifindex(ofport->netdev);
 
     if (ifindex <= 0) {
         /* Not an ifindex port, so do not add a cross-reference to it here */
-        goto out;
+        return;
     }
 
     /* Add to table of ports. */
@@ -407,20 +362,16 @@ dpif_sflow_add_port(struct dpif_sflow *ds, struct ofport *ofport,
     dsp->ofport = ofport;
     dsp->odp_port = odp_port;
     SFL_DS_SET(dsp->dsi, SFL_DSCLASS_IFINDEX, ifindex, 0);
-    hmap_insert(&ds->ports, &dsp->hmap_node, hash_odp_port(odp_port));
+    hmap_insert(&ds->ports, &dsp->hmap_node, hash_int(odp_port, 0));
 
     /* Add poller. */
     if (ds->sflow_agent) {
         dpif_sflow_add_poller(ds, dsp);
     }
-
-out:
-    ovs_mutex_unlock(&mutex);
 }
 
 static void
 dpif_sflow_del_port__(struct dpif_sflow *ds, struct dpif_sflow_port *dsp)
-    OVS_REQUIRES(mutex)
 {
     if (ds->sflow_agent) {
         sfl_agent_removePoller(ds->sflow_agent, &dsp->dsi);
@@ -431,23 +382,17 @@ dpif_sflow_del_port__(struct dpif_sflow *ds, struct dpif_sflow_port *dsp)
 }
 
 void
-dpif_sflow_del_port(struct dpif_sflow *ds, odp_port_t odp_port)
-    OVS_EXCLUDED(mutex)
+dpif_sflow_del_port(struct dpif_sflow *ds, uint32_t odp_port)
 {
-    struct dpif_sflow_port *dsp;
-
-    ovs_mutex_lock(&mutex);
-    dsp = dpif_sflow_find_port(ds, odp_port);
+    struct dpif_sflow_port *dsp = dpif_sflow_find_port(ds, odp_port);
     if (dsp) {
         dpif_sflow_del_port__(ds, dsp);
     }
-    ovs_mutex_unlock(&mutex);
 }
 
 void
 dpif_sflow_set_options(struct dpif_sflow *ds,
                        const struct ofproto_sflow_options *options)
-    OVS_EXCLUDED(mutex)
 {
     struct dpif_sflow_port *dsp;
     bool options_changed;
@@ -458,12 +403,11 @@ dpif_sflow_set_options(struct dpif_sflow *ds,
     uint32_t dsIndex;
     SFLSampler *sampler;
 
-    ovs_mutex_lock(&mutex);
     if (sset_is_empty(&options->targets) || !options->sampling_rate) {
         /* No point in doing any work if there are no targets or nothing to
          * sample. */
-        dpif_sflow_clear__(ds);
-        goto out;
+        dpif_sflow_clear(ds);
+        return;
     }
 
     options_changed = (!ds->options
@@ -480,8 +424,8 @@ dpif_sflow_set_options(struct dpif_sflow *ds,
         if (ds->collectors == NULL) {
             VLOG_WARN_RL(&rl, "no collectors could be initialized, "
                          "sFlow disabled");
-            dpif_sflow_clear__(ds);
-            goto out;
+            dpif_sflow_clear(ds);
+            return;
         }
     }
 
@@ -489,13 +433,13 @@ dpif_sflow_set_options(struct dpif_sflow *ds,
     if (!sflow_choose_agent_address(options->agent_device,
                                     &options->targets,
                                     options->control_ip, &agentIP)) {
-        dpif_sflow_clear__(ds);
-        goto out;
+        dpif_sflow_clear(ds);
+        return;
     }
 
     /* Avoid reconfiguring if options didn't change. */
     if (!options_changed) {
-        goto out;
+        return;
     }
     ofproto_sflow_options_destroy(ds->options);
     ds->options = ofproto_sflow_options_clone(options);
@@ -540,31 +484,20 @@ dpif_sflow_set_options(struct dpif_sflow *ds,
     HMAP_FOR_EACH (dsp, hmap_node, &ds->ports) {
         dpif_sflow_add_poller(ds, dsp);
     }
-
-
-out:
-    ovs_mutex_unlock(&mutex);
 }
 
 int
 dpif_sflow_odp_port_to_ifindex(const struct dpif_sflow *ds,
-                               odp_port_t odp_port) OVS_EXCLUDED(mutex)
+                               uint32_t odp_port)
 {
-    struct dpif_sflow_port *dsp;
-    int ret;
-
-    ovs_mutex_lock(&mutex);
-    dsp = dpif_sflow_find_port(ds, odp_port);
-    ret = dsp ? SFL_DS_INDEX(dsp->dsi) : 0;
-    ovs_mutex_unlock(&mutex);
-    return ret;
+    struct dpif_sflow_port *dsp = dpif_sflow_find_port(ds, odp_port);
+    return dsp ? SFL_DS_INDEX(dsp->dsi) : 0;
 }
 
 void
 dpif_sflow_received(struct dpif_sflow *ds, struct ofpbuf *packet,
-                    const struct flow *flow, odp_port_t odp_in_port,
+                    const struct flow *flow, uint32_t odp_in_port,
                     const union user_action_cookie *cookie)
-    OVS_EXCLUDED(mutex)
 {
     SFL_FLOW_SAMPLE_TYPE fs;
     SFLFlow_sample_element hdrElem;
@@ -574,10 +507,9 @@ dpif_sflow_received(struct dpif_sflow *ds, struct ofpbuf *packet,
     struct dpif_sflow_port *in_dsp;
     ovs_be16 vlan_tci;
 
-    ovs_mutex_lock(&mutex);
     sampler = ds->sflow_agent->samplers;
     if (!sampler) {
-        goto out;
+        return;
     }
 
     /* Build a flow sample. */
@@ -602,12 +534,12 @@ dpif_sflow_received(struct dpif_sflow *ds, struct ofpbuf *packet,
     header->header_protocol = SFLHEADER_ETHERNET_ISO8023;
     /* The frame_length should include the Ethernet FCS (4 bytes),
      * but it has already been stripped,  so we need to add 4 here. */
-    header->frame_length = ofpbuf_size(packet) + 4;
+    header->frame_length = packet->size + 4;
     /* Ethernet FCS stripped off. */
     header->stripped = 4;
-    header->header_length = MIN(ofpbuf_size(packet),
+    header->header_length = MIN(packet->size,
                                 sampler->sFlowFsMaximumHeaderSize);
-    header->header_bytes = ofpbuf_data(packet);
+    header->header_bytes = packet->data;
 
     /* Add extended switch element. */
     memset(&switchElem, 0, sizeof(switchElem));
@@ -626,16 +558,12 @@ dpif_sflow_received(struct dpif_sflow *ds, struct ofpbuf *packet,
     SFLADD_ELEMENT(&fs, &hdrElem);
     SFLADD_ELEMENT(&fs, &switchElem);
     sfl_sampler_writeFlowSample(sampler, &fs);
-
-out:
-    ovs_mutex_unlock(&mutex);
 }
 
 void
-dpif_sflow_run(struct dpif_sflow *ds) OVS_EXCLUDED(mutex)
+dpif_sflow_run(struct dpif_sflow *ds)
 {
-    ovs_mutex_lock(&mutex);
-    if (ds->collectors != NULL) {
+    if (dpif_sflow_is_enabled(ds)) {
         time_t now = time_now();
         route_table_run();
         if (now >= ds->next_tick) {
@@ -643,15 +571,12 @@ dpif_sflow_run(struct dpif_sflow *ds) OVS_EXCLUDED(mutex)
             ds->next_tick = now + 1;
         }
     }
-    ovs_mutex_unlock(&mutex);
 }
 
 void
-dpif_sflow_wait(struct dpif_sflow *ds) OVS_EXCLUDED(mutex)
+dpif_sflow_wait(struct dpif_sflow *ds)
 {
-    ovs_mutex_lock(&mutex);
-    if (ds->collectors != NULL) {
+    if (dpif_sflow_is_enabled(ds)) {
         poll_timer_wait_until(ds->next_tick * 1000LL);
     }
-    ovs_mutex_unlock(&mutex);
 }

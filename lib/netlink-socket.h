@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008, 2009, 2010, 2011, 2012, 2013, 2014 Nicira, Inc.
+ * Copyright (c) 2008, 2009, 2010, 2011, 2012 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,28 +30,12 @@
  * are Linux-specific.  For Netlink protocol definitions, see
  * netlink-protocol.h.  For helper functions for working with Netlink messages,
  * see netlink.h.
- *
- *
- * Thread-safety
- * =============
- *
- * Most of the netlink functions are not fully thread-safe: Only a single
- * thread may use a given nl_sock or nl_dump at one time. The exceptions are:
- *
- *    - nl_sock_recv() is conditionally thread-safe: it may be called from
- *      different threads with the same nl_sock, but each caller must provide
- *      an independent receive buffer.
- *
- *    - nl_dump_next() is conditionally thread-safe: it may be called from
- *      different threads with the same nl_dump, but each caller must provide
- *      independent buffers.
  */
 
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include "ofpbuf.h"
-#include "ovs-atomic.h"
 
 struct nl_sock;
 
@@ -100,30 +84,23 @@ struct nl_transaction {
 void nl_sock_transact_multiple(struct nl_sock *,
                                struct nl_transaction **, size_t n);
 
-/* Transactions without an allocated socket. */
-int nl_transact(int protocol, const struct ofpbuf *request,
-                struct ofpbuf **replyp);
-void nl_transact_multiple(int protocol, struct nl_transaction **, size_t n);
-
 /* Table dumping. */
-#define NL_DUMP_BUFSIZE         4096
-
 struct nl_dump {
     struct nl_sock *sock;       /* Socket being dumped. */
-    uint32_t nl_seq;            /* Expected nlmsg_seq for replies. */
-    atomic_uint status;         /* Low bit set if we read final message.
-                                 * Other bits hold an errno (0 for success). */
-    struct seq *status_seq;     /* Tracks changes to the above 'status'. */
+    uint32_t seq;               /* Expected nlmsg_seq for replies. */
+    struct ofpbuf buffer;       /* Receive buffer currently being iterated. */
+    int status;                 /* 0=OK, EOF=done, or positive errno value. */
 };
 
-void nl_dump_start(struct nl_dump *, int protocol,
+void nl_dump_start(struct nl_dump *, struct nl_sock *,
                    const struct ofpbuf *request);
-bool nl_dump_next(struct nl_dump *, struct ofpbuf *reply, struct ofpbuf *buf);
+bool nl_dump_next(struct nl_dump *, struct ofpbuf *reply);
 int nl_dump_done(struct nl_dump *);
 
 /* Miscellaneous */
 int nl_lookup_genl_family(const char *name, int *number);
 int nl_lookup_genl_mcgroup(const char *family_name, const char *group_name,
-                           unsigned int *multicast_group);
+                           unsigned int *multicast_group,
+                           unsigned int fallback);
 
 #endif /* netlink-socket.h */

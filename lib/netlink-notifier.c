@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
+ * Copyright (c) 2009, 2010, 2011, 2012 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -41,7 +41,7 @@ struct nln {
 
     /* Passed in by nln_create(). */
     int multicast_group;         /* Multicast group we listen on. */
-    int protocol;                /* Protocol passed to nl_sock_create(). */
+    int protocol;                /* Protocal passed to nl_sock_create(). */
     nln_parse_func *parse;       /* Message parsing function. */
     void *change;                /* Change passed to parse. */
 };
@@ -115,8 +115,7 @@ nln_notifier_create(struct nln *nln, nln_notify_func *cb, void *aux)
         }
         if (error) {
             nl_sock_destroy(sock);
-            VLOG_WARN("could not create netlink socket: %s",
-                      ovs_strerror(error));
+            VLOG_WARN("could not create netlink socket: %s", strerror(error));
             return NULL;
         }
         nln->notify_sock = sock;
@@ -185,7 +184,7 @@ nln_run(struct nln *nln)
                 VLOG_WARN_RL(&rl, "netlink receive buffer overflowed");
             } else {
                 VLOG_WARN_RL(&rl, "error reading netlink socket: %s",
-                             ovs_strerror(error));
+                             strerror(error));
             }
             nln_report(nln, NULL);
         }

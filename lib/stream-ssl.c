@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008, 2009, 2010, 2011, 2012, 2013, 2014 Nicira, Inc.
+ * Copyright (c) 2008, 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,12 +29,13 @@
 #include <openssl/ssl.h>
 #include <openssl/x509v3.h>
 #include <poll.h>
-#include <fcntl.h>
+#include <sys/fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include "coverage.h"
 #include "dynamic-string.h"
 #include "entropy.h"
+#include "leak-checker.h"
 #include "ofpbuf.h"
 #include "openflow/openflow.h"
 #include "packets.h"
@@ -46,21 +47,6 @@
 #include "stream.h"
 #include "timeval.h"
 #include "vlog.h"
-
-#ifdef _WIN32
-/* Ref: https://www.openssl.org/support/faq.html#PROG2
- * Your application must link against the same version of the Win32 C-Runtime
- * against which your openssl libraries were linked.  The default version for
- * OpenSSL is /MD - "Multithreaded DLL". If we compile Open vSwitch with
- * something other than /MD, instead of re-compiling OpenSSL
- * toolkit, openssl/applink.c can be #included. Also, it is important
- * to add CRYPTO_malloc_init prior first call to OpenSSL.
- *
- * XXX: The behavior of the following #include when Open vSwitch is
- * compiled with /MD is not tested. */
-#include <openssl/applink.c>
-#define SHUT_RDWR SD_BOTH
-#endif
 
 VLOG_DEFINE_THIS_MODULE(stream_ssl);
 
@@ -82,7 +68,6 @@ struct ssl_stream
     enum ssl_state state;
     enum session_type type;
     int fd;
-    HANDLE wevent;
     SSL *ssl;
     struct ofpbuf *txbuf;
     unsigned int session_nr;
@@ -199,15 +184,13 @@ static void stream_ssl_set_ca_cert_file__(const char *file_name,
 static void ssl_protocol_cb(int write_p, int version, int content_type,
                             const void *, size_t, SSL *, void *sslv_);
 static bool update_ssl_config(struct ssl_config_file *, const char *file_name);
-static int sock_errno(void);
-static void clear_handle(int fd, HANDLE wevent);
 
 static short int
 want_to_poll_events(int want)
 {
     switch (want) {
     case SSL_NOTHING:
-        OVS_NOT_REACHED();
+        NOT_REACHED();
 
     case SSL_READING:
         return POLLIN;
@@ -216,15 +199,16 @@ want_to_poll_events(int want)
         return POLLOUT;
 
     default:
-        OVS_NOT_REACHED();
+        NOT_REACHED();
     }
 }
 
 static int
 new_ssl_stream(const char *name, int fd, enum session_type type,
-               enum ssl_state state, struct stream **streamp)
+               enum ssl_state state, const struct sockaddr_in *remote,
+               struct stream **streamp)
 {
-    struct sockaddr_storage local;
+    struct sockaddr_in local;
     socklen_t local_len = sizeof local;
     struct ssl_stream *sslv;
     SSL *ssl = NULL;
@@ -263,9 +247,8 @@ new_ssl_stream(const char *name, int fd, enum session_type type,
     /* Disable Nagle. */
     retval = setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &on, sizeof on);
     if (retval) {
-        retval = sock_errno();
-        VLOG_ERR("%s: setsockopt(TCP_NODELAY): %s", name,
-                 sock_strerror(retval));
+        VLOG_ERR("%s: setsockopt(TCP_NODELAY): %s", name, strerror(errno));
+        retval = errno;
         goto error;
     }
 
@@ -288,12 +271,13 @@ new_ssl_stream(const char *name, int fd, enum session_type type,
     /* Create and return the ssl_stream. */
     sslv = xmalloc(sizeof *sslv);
     stream_init(&sslv->stream, &ssl_stream_class, EAGAIN, name);
+    stream_set_remote_ip(&sslv->stream, remote->sin_addr.s_addr);
+    stream_set_remote_port(&sslv->stream, remote->sin_port);
+    stream_set_local_ip(&sslv->stream, local.sin_addr.s_addr);
+    stream_set_local_port(&sslv->stream, local.sin_port);
     sslv->state = state;
     sslv->type = type;
     sslv->fd = fd;
-#ifdef _WIN32
-    sslv->wevent = CreateEvent(NULL, FALSE, FALSE, NULL);
-#endif
     sslv->ssl = ssl;
     sslv->txbuf = NULL;
     sslv->rx_want = sslv->tx_want = SSL_NOTHING;
@@ -312,7 +296,7 @@ error:
     if (ssl) {
         SSL_free(ssl);
     }
-    closesocket(fd);
+    close(fd);
     return retval;
 }
 
@@ -326,6 +310,7 @@ ssl_stream_cast(struct stream *stream)
 static int
 ssl_open(const char *name, char *suffix, struct stream **streamp, uint8_t dscp)
 {
+    struct sockaddr_in sin;
     int error, fd;
 
     error = ssl_init();
@@ -333,13 +318,13 @@ ssl_open(const char *name, char *suffix, struct stream **streamp, uint8_t dscp)
         return error;
     }
 
-    error = inet_open_active(SOCK_STREAM, suffix, OFP_OLD_PORT, NULL, &fd,
+    error = inet_open_active(SOCK_STREAM, suffix, OFP_SSL_PORT, &sin, &fd,
                              dscp);
     if (fd >= 0) {
         int state = error ? STATE_TCP_CONNECTING : STATE_SSL_CONNECTING;
-        return new_ssl_stream(name, fd, CLIENT, state, streamp);
+        return new_ssl_stream(name, fd, CLIENT, state, &sin, streamp);
     } else {
-        VLOG_ERR("%s: connect: %s", name, ovs_strerror(error));
+        VLOG_ERR("%s: connect: %s", name, strerror(error));
         return error;
     }
 }
@@ -385,7 +370,7 @@ do_ca_cert_bootstrap(struct stream *stream)
             return EPROTO;
         } else {
             VLOG_ERR("could not bootstrap CA cert: creating %s failed: %s",
-                     ca_cert.file_name, ovs_strerror(errno));
+                     ca_cert.file_name, strerror(errno));
             return errno;
         }
     }
@@ -394,7 +379,7 @@ do_ca_cert_bootstrap(struct stream *stream)
     if (!file) {
         error = errno;
         VLOG_ERR("could not bootstrap CA cert: fdopen failed: %s",
-                 ovs_strerror(error));
+                 strerror(error));
         unlink(ca_cert.file_name);
         return error;
     }
@@ -411,7 +396,7 @@ do_ca_cert_bootstrap(struct stream *stream)
     if (fclose(file)) {
         error = errno;
         VLOG_ERR("could not bootstrap CA cert: writing %s failed: %s",
-                 ca_cert.file_name, ovs_strerror(error));
+                 ca_cert.file_name, strerror(error));
         unlink(ca_cert.file_name);
         return error;
     }
@@ -457,7 +442,7 @@ ssl_connect(struct stream *stream)
 
     case STATE_SSL_CONNECTING:
         /* Capture the first few bytes of received data so that we can guess
-         * what kind of funny data we've been sent if SSL negotiation fails. */
+         * what kind of funny data we've been sent if SSL negotation fails. */
         if (sslv->n_head <= 0) {
             sslv->n_head = recv(sslv->fd, sslv->head, sizeof sslv->head,
                                 MSG_PEEK);
@@ -500,7 +485,7 @@ ssl_connect(struct stream *stream)
         }
     }
 
-    OVS_NOT_REACHED();
+    NOT_REACHED();
 }
 
 static void
@@ -522,8 +507,7 @@ ssl_close(struct stream *stream)
     ERR_clear_error();
 
     SSL_free(sslv->ssl);
-    clear_handle(sslv->fd, sslv->wevent);
-    closesocket(sslv->fd);
+    close(sslv->fd);
     free(sslv);
 }
 
@@ -581,7 +565,7 @@ interpret_ssl_error(const char *function, int ret, int error,
             if (ret < 0) {
                 int status = errno;
                 VLOG_WARN_RL(&rl, "%s: system error (%s)",
-                             function, ovs_strerror(status));
+                             function, strerror(status));
                 return status;
             } else {
                 VLOG_WARN_RL(&rl, "%s: unexpected SSL connection close",
@@ -650,15 +634,14 @@ ssl_do_tx(struct stream *stream)
 
     for (;;) {
         int old_state = SSL_get_state(sslv->ssl);
-        int ret = SSL_write(sslv->ssl,
-                            ofpbuf_data(sslv->txbuf), ofpbuf_size(sslv->txbuf));
+        int ret = SSL_write(sslv->ssl, sslv->txbuf->data, sslv->txbuf->size);
         if (old_state != SSL_get_state(sslv->ssl)) {
             sslv->rx_want = SSL_NOTHING;
         }
         sslv->tx_want = SSL_NOTHING;
         if (ret > 0) {
             ofpbuf_pull(sslv->txbuf, ret);
-            if (ofpbuf_size(sslv->txbuf) == 0) {
+            if (sslv->txbuf->size == 0) {
                 return 0;
             }
         } else {
@@ -691,6 +674,7 @@ ssl_send(struct stream *stream, const void *buffer, size_t n)
             ssl_clear_txbuf(sslv);
             return n;
         case EAGAIN:
+            leak_checker_claim(buffer);
             return n;
         default:
             sslv->txbuf = NULL;
@@ -715,8 +699,7 @@ ssl_run_wait(struct stream *stream)
     struct ssl_stream *sslv = ssl_stream_cast(stream);
 
     if (sslv->tx_want != SSL_NOTHING) {
-        poll_fd_wait_event(sslv->fd, sslv->wevent,
-                           want_to_poll_events(sslv->tx_want));
+        poll_fd_wait(sslv->fd, want_to_poll_events(sslv->tx_want));
     }
 }
 
@@ -732,26 +715,25 @@ ssl_wait(struct stream *stream, enum stream_wait_type wait)
         } else {
             switch (sslv->state) {
             case STATE_TCP_CONNECTING:
-                poll_fd_wait_event(sslv->fd, sslv->wevent, POLLOUT);
+                poll_fd_wait(sslv->fd, POLLOUT);
                 break;
 
             case STATE_SSL_CONNECTING:
                 /* ssl_connect() called SSL_accept() or SSL_connect(), which
                  * set up the status that we test here. */
-                poll_fd_wait_event(sslv->fd, sslv->wevent,
-                                   want_to_poll_events(SSL_want(sslv->ssl)));
+                poll_fd_wait(sslv->fd,
+                             want_to_poll_events(SSL_want(sslv->ssl)));
                 break;
 
             default:
-                OVS_NOT_REACHED();
+                NOT_REACHED();
             }
         }
         break;
 
     case STREAM_RECV:
         if (sslv->rx_want != SSL_NOTHING) {
-            poll_fd_wait_event(sslv->fd, sslv->wevent,
-                               want_to_poll_events(sslv->rx_want));
+            poll_fd_wait(sslv->fd, want_to_poll_events(sslv->rx_want));
         } else {
             poll_immediate_wake();
         }
@@ -768,7 +750,7 @@ ssl_wait(struct stream *stream, enum stream_wait_type wait)
         break;
 
     default:
-        OVS_NOT_REACHED();
+        NOT_REACHED();
     }
 }
 
@@ -791,7 +773,6 @@ struct pssl_pstream
 {
     struct pstream pstream;
     int fd;
-    HANDLE wevent;
 };
 
 const struct pstream_class pssl_pstream_class;
@@ -807,11 +788,9 @@ static int
 pssl_open(const char *name OVS_UNUSED, char *suffix, struct pstream **pstreamp,
           uint8_t dscp)
 {
-    char bound_name[SS_NTOP_BUFSIZE + 16];
-    char addrbuf[SS_NTOP_BUFSIZE];
-    struct sockaddr_storage ss;
     struct pssl_pstream *pssl;
-    uint16_t port;
+    struct sockaddr_in sin;
+    char bound_name[128];
     int retval;
     int fd;
 
@@ -820,22 +799,17 @@ pssl_open(const char *name OVS_UNUSED, char *suffix, struct pstream **pstreamp,
         return retval;
     }
 
-    fd = inet_open_passive(SOCK_STREAM, suffix, OFP_OLD_PORT, &ss, dscp);
+    fd = inet_open_passive(SOCK_STREAM, suffix, OFP_SSL_PORT, &sin, dscp);
     if (fd < 0) {
         return -fd;
     }
-
-    port = ss_get_port(&ss);
-    snprintf(bound_name, sizeof bound_name, "ptcp:%"PRIu16":%s",
-             port, ss_format_address(&ss, addrbuf, sizeof addrbuf));
+    sprintf(bound_name, "pssl:%"PRIu16":"IP_FMT,
+            ntohs(sin.sin_port), IP_ARGS(sin.sin_addr.s_addr));
 
     pssl = xmalloc(sizeof *pssl);
     pstream_init(&pssl->pstream, &pssl_pstream_class, bound_name);
-    pstream_set_bound_port(&pssl->pstream, htons(port));
+    pstream_set_bound_port(&pssl->pstream, sin.sin_port);
     pssl->fd = fd;
-#ifdef _WIN32
-    pssl->wevent = CreateEvent(NULL, FALSE, FALSE, NULL);
-#endif
     *pstreamp = &pssl->pstream;
     return 0;
 }
@@ -844,8 +818,7 @@ static void
 pssl_close(struct pstream *pstream)
 {
     struct pssl_pstream *pssl = pssl_pstream_cast(pstream);
-    clear_handle(pssl->fd, pssl->wevent);
-    closesocket(pssl->fd);
+    close(pssl->fd);
     free(pssl);
 }
 
@@ -853,37 +826,32 @@ static int
 pssl_accept(struct pstream *pstream, struct stream **new_streamp)
 {
     struct pssl_pstream *pssl = pssl_pstream_cast(pstream);
-    char name[SS_NTOP_BUFSIZE + 16];
-    char addrbuf[SS_NTOP_BUFSIZE];
-    struct sockaddr_storage ss;
-    socklen_t ss_len = sizeof ss;
+    struct sockaddr_in sin;
+    socklen_t sin_len = sizeof sin;
+    char name[128];
     int new_fd;
     int error;
 
-    new_fd = accept(pssl->fd, (struct sockaddr *) &ss, &ss_len);
+    new_fd = accept(pssl->fd, (struct sockaddr *) &sin, &sin_len);
     if (new_fd < 0) {
-        error = sock_errno();
-#ifdef _WIN32
-        if (error == WSAEWOULDBLOCK) {
-            error = EAGAIN;
-        }
-#endif
+        error = errno;
         if (error != EAGAIN) {
-            VLOG_DBG_RL(&rl, "accept: %s", sock_strerror(error));
+            VLOG_DBG_RL(&rl, "accept: %s", strerror(error));
         }
         return error;
     }
 
     error = set_nonblocking(new_fd);
     if (error) {
-        closesocket(new_fd);
+        close(new_fd);
         return error;
     }
 
-    snprintf(name, sizeof name, "tcp:%s:%"PRIu16,
-             ss_format_address(&ss, addrbuf, sizeof addrbuf),
-             ss_get_port(&ss));
-    return new_ssl_stream(name, new_fd, SERVER, STATE_SSL_CONNECTING,
+    sprintf(name, "ssl:"IP_FMT, IP_ARGS(sin.sin_addr.s_addr));
+    if (sin.sin_port != htons(OFP_SSL_PORT)) {
+        sprintf(strchr(name, '\0'), ":%"PRIu16, ntohs(sin.sin_port));
+    }
+    return new_ssl_stream(name, new_fd, SERVER, STATE_SSL_CONNECTING, &sin,
                           new_streamp);
 }
 
@@ -891,7 +859,7 @@ static void
 pssl_wait(struct pstream *pstream)
 {
     struct pssl_pstream *pssl = pssl_pstream_cast(pstream);
-    poll_fd_wait_event(pssl->fd, pssl->wevent, POLLIN);
+    poll_fd_wait(pssl->fd, POLLIN);
 }
 
 static int
@@ -939,10 +907,6 @@ do_ssl_init(void)
 {
     SSL_METHOD *method;
 
-#ifdef _WIN32
-    /* The following call is needed if we "#include <openssl/applink.c>". */
-    CRYPTO_malloc_init();
-#endif
     SSL_library_init();
     SSL_load_error_strings();
 
@@ -1053,8 +1017,7 @@ update_ssl_config(struct ssl_config_file *config, const char *file_name)
      * here. */
     error = get_mtime(file_name, &mtime);
     if (error && error != ENOENT) {
-        VLOG_ERR_RL(&rl, "%s: stat failed (%s)",
-                    file_name, ovs_strerror(error));
+        VLOG_ERR_RL(&rl, "%s: stat failed (%s)", file_name, strerror(error));
     }
     if (config->file_name
         && !strcmp(config->file_name, file_name)
@@ -1162,7 +1125,7 @@ read_cert_file(const char *file_name, X509 ***certs, size_t *n_certs)
     file = fopen(file_name, "r");
     if (!file) {
         VLOG_ERR("failed to open %s for reading: %s",
-                 file_name, ovs_strerror(errno));
+                 file_name, strerror(errno));
         return errno;
     }
 
@@ -1250,7 +1213,7 @@ log_ca_cert(const char *file_name, X509 *cert)
             if (i) {
                 ds_put_char(&fp, ':');
             }
-            ds_put_format(&fp, "%02x", digest[i]);
+            ds_put_format(&fp, "%02hhx", digest[i]);
         }
     }
     subject = X509_NAME_oneline(X509_get_subject_name(cert), NULL, 0);
@@ -1285,7 +1248,7 @@ stream_ssl_set_ca_cert_file__(const char *file_name,
         for (i = 0; i < n_certs; i++) {
             /* SSL_CTX_add_client_CA makes a copy of the relevant data. */
             if (SSL_CTX_add_client_CA(ctx, certs[i]) != 1) {
-                VLOG_ERR("failed to add client certificate %"PRIuSIZE" from %s: %s",
+                VLOG_ERR("failed to add client certificate %zu from %s: %s",
                          i, file_name,
                          ERR_error_string(ERR_get_error(), NULL));
             } else {
@@ -1407,23 +1370,10 @@ ssl_protocol_cb(int write_p, int version OVS_UNUSED, int content_type,
         ds_put_format(&details, "type %d", content_type);
     }
 
-    VLOG_DBG("%s%u%s%s %s (%"PRIuSIZE" bytes)",
+    VLOG_DBG("%s%u%s%s %s (%zu bytes)",
              sslv->type == CLIENT ? "client" : "server",
              sslv->session_nr, write_p ? "-->" : "<--",
              stream_get_name(&sslv->stream), ds_cstr(&details), len);
 
     ds_destroy(&details);
-}
-
-static void
-clear_handle(int fd OVS_UNUSED, HANDLE wevent OVS_UNUSED)
-{
-#ifdef _WIN32
-    if (fd) {
-        WSAEventSelect(fd, NULL, 0);
-    }
-    if (wevent) {
-        CloseHandle(wevent);
-    }
-#endif
 }

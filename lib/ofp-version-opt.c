@@ -1,8 +1,10 @@
 #include <config.h>
-#include "dynamic-string.h"
 #include "ofp-util.h"
 #include "ofp-version-opt.h"
-#include "ovs-thread.h"
+#include "vlog.h"
+#include "dynamic-string.h"
+
+VLOG_DEFINE_THIS_MODULE(ofp_version);
 
 static uint32_t allowed_versions = 0;
 
@@ -15,14 +17,12 @@ get_allowed_ofp_versions(void)
 void
 set_allowed_ofp_versions(const char *string)
 {
-    assert_single_threaded();
     allowed_versions = ofputil_versions_from_string(string);
 }
 
 void
 mask_allowed_ofp_versions(uint32_t bitmap)
 {
-    assert_single_threaded();
     allowed_versions &= bitmap;
 }
 

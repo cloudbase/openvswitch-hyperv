@@ -35,13 +35,11 @@ struct lacp_settings {
     uint16_t priority;                /* System priority. */
     bool active;                      /* Active or passive mode? */
     bool fast;                        /* Fast or slow probe interval. */
-    bool fallback_ab_cfg;             /* Fallback to BM_SLB on LACP failure. */
 };
 
 void lacp_init(void);
 struct lacp *lacp_create(void);
-void lacp_unref(struct lacp *);
-struct lacp *lacp_ref(const struct lacp *);
+void lacp_destroy(struct lacp *);
 
 void lacp_configure(struct lacp *, const struct lacp_settings *);
 bool lacp_is_active(const struct lacp *);
@@ -62,6 +60,7 @@ void lacp_slave_register(struct lacp *, void *slave_,
 void lacp_slave_unregister(struct lacp *, const void *slave);
 void lacp_slave_carrier_changed(const struct lacp *, const void *slave);
 bool lacp_slave_may_enable(const struct lacp *, const void *slave);
+uint16_t lacp_slave_get_port_id(const struct lacp *, const void *slave);
 bool lacp_slave_is_current(const struct lacp *, const void *slave_);
 
 /* Callback function for lacp_run() for sending a LACP PDU. */

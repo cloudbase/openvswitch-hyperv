@@ -37,8 +37,6 @@ uint32_t hash_bytes(const void *, size_t n_bytes, uint32_t basis);
 
 static inline uint32_t hash_int(uint32_t x, uint32_t basis);
 static inline uint32_t hash_2words(uint32_t, uint32_t);
-static inline uint32_t hash_uint64(uint64_t);
-static inline uint32_t hash_uint64_basis(uint64_t x, uint32_t basis);
 uint32_t hash_3words(uint32_t, uint32_t, uint32_t);
 
 static inline uint32_t hash_boolean(bool x, uint32_t basis);
@@ -117,19 +115,9 @@ static inline uint32_t hash_pointer(const void *p, uint32_t basis)
 
 static inline uint32_t hash_2words(uint32_t x, uint32_t y)
 {
-    return mhash_finish(mhash_add(mhash_add(x, 0), y), 8);
+    return mhash_finish(mhash_add(mhash_add(x, 0), y), 4);
 }
 
-static inline uint32_t hash_uint64(const uint64_t x)
-{
-    return hash_2words((uint32_t)(x >> 32), (uint32_t)x);
-}
-
-static inline uint32_t hash_uint64_basis(const uint64_t x,
-                                         const uint32_t basis)
-{
-    return hash_3words((uint32_t)(x >> 32), (uint32_t)x, basis);
-}
 #ifdef __cplusplus
 }
 #endif

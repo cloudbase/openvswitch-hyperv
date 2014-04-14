@@ -27,7 +27,6 @@
 #include "compiler.h"
 #include "dirs.h"
 #include "dynamic-string.h"
-#include "fatal-signal.h"
 #include "file.h"
 #include "lockfile.h"
 #include "log.h"
@@ -41,10 +40,12 @@
 #include "util.h"
 #include "vlog.h"
 
+VLOG_DEFINE_THIS_MODULE(ovsdb_tool);
+
 /* -m, --more: Verbosity level for "show-log" command output. */
 static int show_log_verbosity;
 
-static const struct command *get_all_commands(void);
+static const struct command all_commands[];
 
 static void usage(void) NO_RETURN;
 static void parse_options(int argc, char *argv[]);
@@ -57,15 +58,15 @@ main(int argc, char *argv[])
 {
     set_program_name(argv[0]);
     parse_options(argc, argv);
-    fatal_ignore_sigpipe();
-    run_command(argc - optind, argv + optind, get_all_commands());
+    signal(SIGPIPE, SIG_IGN);
+    run_command(argc - optind, argv + optind, all_commands);
     return 0;
 }
 
 static void
 parse_options(int argc, char *argv[])
 {
-    static const struct option long_options[] = {
+    static struct option long_options[] = {
         {"more", no_argument, NULL, 'm'},
         {"verbose", optional_argument, NULL, 'v'},
         {"help", no_argument, NULL, 'h'},
@@ -517,17 +518,11 @@ do_show_log(int argc, char *argv[])
 
             date = shash_find_data(json_object(json), "_date");
             if (date && date->type == JSON_INTEGER) {
-                long long int t = json_integer(date);
-                char *s;
+                time_t t = json_integer(date);
+                char s[128];
 
-                if (t < INT32_MAX) {
-                    /* Older versions of ovsdb wrote timestamps in seconds. */
-                    t *= 1000;
-                }
-
-                s = xastrftime_msec(" %Y-%m-%d %H:%M:%S.###", t, true);
-                fputs(s, stdout);
-                free(s);
+                strftime(s, sizeof s, "%Y-%m-%d %H:%M:%S", gmtime(&t));
+                printf(" %s", s);
             }
 
             comment = shash_find_data(json_object(json), "_comment");
@@ -570,8 +565,3 @@ static const struct command all_commands[] = {
     { "help", 0, INT_MAX, do_help },
     { NULL, 0, 0, NULL },
 };
-
-static const struct command *get_all_commands(void)
-{
-    return all_commands;
-}

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008, 2009, 2010, 2011, 2013 Nicira, Inc.
+ * Copyright (c) 2008, 2009, 2010, 2011 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,20 +16,14 @@
 
 /* High-level wrapper around the "poll" system call.
  *
- * The intended usage is for each thread's main loop to go about its business
+ * Intended usage is for the program's main loop to go about its business
  * servicing whatever events it needs to.  Then, when it runs out of immediate
  * tasks, it calls each subordinate module's "wait" function, which in turn
  * calls one (or more) of the functions poll_fd_wait(), poll_immediate_wake(),
  * and poll_timer_wait() to register to be awakened when the appropriate event
  * occurs.  Then the main loop calls poll_block(), which blocks until one of
- * the registered events happens.
- *
- *
- * Thread-safety
- * =============
- *
- * The poll set is per-thread, so all functions in this module are thread-safe.
- */
+ * the registered events happens. */
+
 #ifndef POLL_LOOP_H
 #define POLL_LOOP_H 1
 
@@ -40,35 +34,36 @@
 extern "C" {
 #endif
 
+struct poll_waiter;
 
 /* Schedule events to wake up the following poll_block().
  *
  * The poll_loop logs the 'where' argument to each function at "debug" level
- * when an event causes a wakeup.  Each of these ways to schedule an event has
- * a function and a macro wrapper.  The macro version automatically supplies
- * the source code location of the caller.  The function version allows the
- * caller to supply a location explicitly, which is useful if the caller's own
- * caller would be more useful in log output.  See timer_wait_at() for an
- * example. */
-void poll_fd_wait_at(int fd, HANDLE wevent, short int events, const char *where);
-#ifndef _WIN32
-#define poll_fd_wait(fd, events) poll_fd_wait_at(fd, 0, events, SOURCE_LOCATOR)
-#endif
-#define poll_fd_wait_event(fd, wevent, events)  \
-    poll_fd_wait_at(fd, wevent, events, SOURCE_LOCATOR)
+ * when an event causes a wakeup.  Ordinarily, it is automatically filled in
+ * with the location in the source of the call, and caller should therefore
+ * omit it.  But, if the function you are implementing is very generic, so that
+ * its location in the source would not be very helpful for debugging, you can
+ * avoid the macro expansion and pass a different argument, e.g.:
+ *      (poll_fd_wait)(fd, events, where);
+ * See timer_wait() for an example.
+ */
+struct poll_waiter *poll_fd_wait(int fd, short int events, const char *where);
+#define poll_fd_wait(fd, events) poll_fd_wait(fd, events, SOURCE_LOCATOR)
 
-void poll_timer_wait_at(long long int msec, const char *where);
-#define poll_timer_wait(msec) poll_timer_wait_at(msec, SOURCE_LOCATOR)
+void poll_timer_wait(long long int msec, const char *where);
+#define poll_timer_wait(msec) poll_timer_wait(msec, SOURCE_LOCATOR)
 
-void poll_timer_wait_until_at(long long int msec, const char *where);
-#define poll_timer_wait_until(msec)             \
-    poll_timer_wait_until_at(msec, SOURCE_LOCATOR)
+void poll_timer_wait_until(long long int msec, const char *where);
+#define poll_timer_wait_until(msec) poll_timer_wait_until(msec, SOURCE_LOCATOR)
 
-void poll_immediate_wake_at(const char *where);
-#define poll_immediate_wake() poll_immediate_wake_at(SOURCE_LOCATOR)
+void poll_immediate_wake(const char *where);
+#define poll_immediate_wake() poll_immediate_wake(SOURCE_LOCATOR)
 
 /* Wait until an event occurs. */
 void poll_block(void);
+
+/* Cancel a file descriptor callback or event. */
+void poll_cancel(struct poll_waiter *);
 
 #ifdef  __cplusplus
 }

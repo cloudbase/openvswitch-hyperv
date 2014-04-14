@@ -5,16 +5,19 @@ equivalent \fBovs\-dpctl\fR commands.
 .IP "\fBdpif/dump\-dps\fR"
 Prints the name of each configured datapath on a separate line.
 .
-.IP "\fBdpif/show\fR"
+.IP "\fBdpif/show\fR [\fIdp\fR...]"
 Prints a summary of configured datapaths, including statistics and a
 list of connected ports.  The port information includes the OpenFlow
 port number, datapath port number, and the type.  (The local port is
 identified as OpenFlow port 65534.)
+.IP
+If one or more datapaths are specified, information on only those
+datapaths are displayed.  Otherwise, information about all configured
+datapaths are shown.
 .
-.IP "\fBdpif/dump\-flows\fR [\fB\-m\fR] \fIdp\fR"
+.IP "\fBdpif/dump\-flows \fIdp\fR"
 Prints to the console all flow entries in datapath \fIdp\fR's
-flow table. Without \fB\-m\fR, output omits match fields that a flow
-wildcards entirely; with \fB\-m\fR output includes all wildcarded fields.
+flow table.
 .IP
 This command is primarily useful for debugging Open vSwitch.  The flow
 table entries that it displays are not OpenFlow flow entries.  Instead,

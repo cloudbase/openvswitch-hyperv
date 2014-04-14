@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008, 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
+ * Copyright (c) 2008, 2009, 2010, 2011, 2012 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,7 +23,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include "ovs-thread.h"
 #include "poll-loop.h"
 #include "shash.h"
 #include "sset.h"
@@ -41,11 +40,10 @@
 VLOG_DEFINE_THIS_MODULE(fatal_signal);
 
 /* Signals to catch. */
-#ifndef _WIN32
 static const int fatal_signals[] = { SIGTERM, SIGINT, SIGHUP, SIGALRM };
-#else
-static const int fatal_signals[] = { SIGTERM };
-#endif
+
+/* Signals to catch as a sigset_t. */
+static sigset_t fatal_signal_set;
 
 /* Hooks to call upon catching a signal */
 struct hook {
@@ -59,22 +57,13 @@ static struct hook hooks[MAX_HOOKS];
 static size_t n_hooks;
 
 static int signal_fds[2];
-static HANDLE wevent;
 static volatile sig_atomic_t stored_sig_nr = SIG_ATOMIC_MAX;
 
-static struct ovs_mutex mutex;
-
+static void fatal_signal_init(void);
 static void atexit_handler(void);
 static void call_hooks(int sig_nr);
-#ifdef _WIN32
-static BOOL WINAPI ConsoleHandlerRoutine(DWORD dwCtrlType);
-#endif
 
-/* Initializes the fatal signal handling module.  Calling this function is
- * optional, because calling any other function in the module will also
- * initialize it.  However, in a multithreaded program, the module must be
- * initialized while the process is still single-threaded. */
-void
+static void
 fatal_signal_init(void)
 {
     static bool inited = false;
@@ -82,50 +71,33 @@ fatal_signal_init(void)
     if (!inited) {
         size_t i;
 
-        assert_single_threaded();
         inited = true;
 
-        ovs_mutex_init_recursive(&mutex);
-#ifndef _WIN32
         xpipe_nonblocking(signal_fds);
-#else
-        wevent = CreateEvent(NULL, TRUE, FALSE, NULL);
-        if (!wevent) {
-            char *msg_buf = ovs_lasterror_to_string();
-            VLOG_FATAL("Failed to create a event (%s).", msg_buf);
-        }
 
-        /* Register a function to handle Ctrl+C. */
-        SetConsoleCtrlHandler(ConsoleHandlerRoutine, true);
-#endif
-
+        sigemptyset(&fatal_signal_set);
         for (i = 0; i < ARRAY_SIZE(fatal_signals); i++) {
             int sig_nr = fatal_signals[i];
-#ifndef _WIN32
             struct sigaction old_sa;
 
+            sigaddset(&fatal_signal_set, sig_nr);
             xsigaction(sig_nr, NULL, &old_sa);
             if (old_sa.sa_handler == SIG_DFL
                 && signal(sig_nr, fatal_signal_handler) == SIG_ERR) {
-                VLOG_FATAL("signal failed (%s)", ovs_strerror(errno));
+                VLOG_FATAL("signal failed (%s)", strerror(errno));
             }
-#else
-            if (signal(sig_nr, fatal_signal_handler) == SIG_ERR) {
-                VLOG_FATAL("signal failed (%s)", ovs_strerror(errno));
-            }
-#endif
         }
         atexit(atexit_handler);
     }
 }
 
-/* Registers 'hook_cb' to be called from inside poll_block() following a fatal
- * signal.  'hook_cb' does not need to be async-signal-safe.  In a
- * multithreaded program 'hook_cb' might be called from any thread, with
- * threads other than the one running 'hook_cb' in unknown states.
+/* Registers 'hook_cb' to be called when a process termination signal is
+ * raised.  If 'run_at_exit' is true, 'hook_cb' is also called during normal
+ * process termination, e.g. when exit() is called or when main() returns.
  *
- * If 'run_at_exit' is true, 'hook_cb' is also called during normal process
- * termination, e.g. when exit() is called or when main() returns.
+ * 'hook_cb' is not called immediately from the signal handler but rather the
+ * next time the poll loop iterates, so it is freed from the usual restrictions
+ * on signal handler functions.
  *
  * If the current process forks, fatal_signal_fork() may be called to clear the
  * parent process's fatal signal hooks, so that 'hook_cb' is only called when
@@ -139,14 +111,12 @@ fatal_signal_add_hook(void (*hook_cb)(void *aux), void (*cancel_cb)(void *aux),
 {
     fatal_signal_init();
 
-    ovs_mutex_lock(&mutex);
     ovs_assert(n_hooks < MAX_HOOKS);
     hooks[n_hooks].hook_cb = hook_cb;
     hooks[n_hooks].cancel_cb = cancel_cb;
     hooks[n_hooks].aux = aux;
     hooks[n_hooks].run_at_exit = run_at_exit;
     n_hooks++;
-    ovs_mutex_unlock(&mutex);
 }
 
 /* Handles fatal signal number 'sig_nr'.
@@ -161,11 +131,7 @@ fatal_signal_add_hook(void (*hook_cb)(void *aux), void (*cancel_cb)(void *aux),
 void
 fatal_signal_handler(int sig_nr)
 {
-#ifndef _WIN32
     ignore(write(signal_fds[1], "", 1));
-#else
-    SetEvent(wevent);
-#endif
     stored_sig_nr = sig_nr;
 }
 
@@ -189,25 +155,14 @@ fatal_signal_run(void)
 
     sig_nr = stored_sig_nr;
     if (sig_nr != SIG_ATOMIC_MAX) {
-        char namebuf[SIGNAL_NAME_BUFSIZE];
-
-        ovs_mutex_lock(&mutex);
-
-#ifndef _WIN32
         VLOG_WARN("terminating with signal %d (%s)",
-                  (int)sig_nr, signal_name(sig_nr, namebuf, sizeof namebuf));
-#else
-        VLOG_WARN("terminating with signal %d", (int)sig_nr);
-#endif
+                  (int)sig_nr, signal_name(sig_nr));
         call_hooks(sig_nr);
 
         /* Re-raise the signal with the default handling so that the program
          * termination status reflects that we were killed by this signal */
         signal(sig_nr, SIG_DFL);
         raise(sig_nr);
-
-        ovs_mutex_unlock(&mutex);
-        OVS_NOT_REACHED();
     }
 }
 
@@ -215,15 +170,7 @@ void
 fatal_signal_wait(void)
 {
     fatal_signal_init();
-    poll_fd_wait_event(signal_fds[0], wevent, POLLIN);
-}
-
-void
-fatal_ignore_sigpipe(void)
-{
-#ifndef _WIN32
-    signal(SIGPIPE, SIG_IGN);
-#endif
+    poll_fd_wait(signal_fds[0], POLLIN);
 }
 
 static void
@@ -249,15 +196,6 @@ call_hooks(int sig_nr)
         }
     }
 }
-
-#ifdef _WIN32
-BOOL WINAPI ConsoleHandlerRoutine(DWORD dwCtrlType)
-{
-    stored_sig_nr = SIGINT;
-    SetEvent(wevent);
-    return true;
-}
-#endif
 
 /* Files to delete on exit. */
 static struct sset files = SSET_INITIALIZER(&files);
@@ -275,16 +213,12 @@ static void do_unlink_files(void);
 void
 fatal_signal_add_file_to_unlink(const char *file)
 {
-    fatal_signal_init();
-
-    ovs_mutex_lock(&mutex);
     if (!added_hook) {
         added_hook = true;
         fatal_signal_add_hook(unlink_files, cancel_files, NULL, true);
     }
 
     sset_add(&files, file);
-    ovs_mutex_unlock(&mutex);
 }
 
 /* Unregisters 'file' from being unlinked when the program terminates via
@@ -292,11 +226,7 @@ fatal_signal_add_file_to_unlink(const char *file)
 void
 fatal_signal_remove_file_to_unlink(const char *file)
 {
-    fatal_signal_init();
-
-    ovs_mutex_lock(&mutex);
     sset_find_and_delete(&files, file);
-    ovs_mutex_unlock(&mutex);
 }
 
 /* Like fatal_signal_remove_file_to_unlink(), but also unlinks 'file'.
@@ -304,20 +234,12 @@ fatal_signal_remove_file_to_unlink(const char *file)
 int
 fatal_signal_unlink_file_now(const char *file)
 {
-    int error;
-
-    fatal_signal_init();
-
-    ovs_mutex_lock(&mutex);
-
-    error = unlink(file) ? errno : 0;
+    int error = unlink(file) ? errno : 0;
     if (error) {
-        VLOG_WARN("could not unlink \"%s\" (%s)", file, ovs_strerror(error));
+        VLOG_WARN("could not unlink \"%s\" (%s)", file, strerror(error));
     }
 
     fatal_signal_remove_file_to_unlink(file);
-
-    ovs_mutex_unlock(&mutex);
 
     return error;
 }
@@ -357,8 +279,6 @@ void
 fatal_signal_fork(void)
 {
     size_t i;
-
-    assert_single_threaded();
 
     for (i = 0; i < n_hooks; i++) {
         struct hook *h = &hooks[i];

@@ -22,19 +22,15 @@
 #include <netinet/ip6.h>
 #include "flow.h"
 #include "ofp-errors.h"
-#include "ofp-util.h"
 #include "packets.h"
-#include "util.h"
 
 struct ds;
 struct match;
 
 /* The comment on each of these indicates the member in "union mf_value" used
  * to represent its value. */
-enum OVS_PACKED_ENUM mf_field_id {
+enum mf_field_id {
     /* Metadata. */
-    MFF_DP_HASH,                /* be32 */
-    MFF_RECIRC_ID,              /* be32 */
     MFF_TUN_ID,                 /* be64 */
     MFF_TUN_SRC,                /* be32 */
     MFF_TUN_DST,                /* be32 */
@@ -43,9 +39,8 @@ enum OVS_PACKED_ENUM mf_field_id {
     MFF_TUN_TOS,                /* u8 */
     MFF_METADATA,               /* be64 */
     MFF_IN_PORT,                /* be16 */
-    MFF_IN_PORT_OXM,            /* be32 */
     MFF_SKB_PRIORITY,           /* be32 */
-    MFF_PKT_MARK,               /* be32 */
+    MFF_SKB_MARK,               /* be32 */
 
 #if FLOW_N_REGS > 0
     MFF_REG0,                   /* be32 */
@@ -121,14 +116,9 @@ enum OVS_PACKED_ENUM mf_field_id {
     /* L4. */
     MFF_TCP_SRC,                /* be16 (used for IPv4 or IPv6) */
     MFF_TCP_DST,                /* be16 (used for IPv4 or IPv6) */
-    MFF_TCP_FLAGS,              /* be16, 12 bits (4 MSB zeroed,
-                                 * used for IPv4 or IPv6) */
 
     MFF_UDP_SRC,                /* be16 (used for IPv4 or IPv6) */
     MFF_UDP_DST,                /* be16 (used for IPv4 or IPv6) */
-
-    MFF_SCTP_SRC,               /* be16 (used for IPv4 or IPv6) */
-    MFF_SCTP_DST,               /* be16 (used for IPv4 or IPv6) */
 
     MFF_ICMPV4_TYPE,            /* u8 */
     MFF_ICMPV4_CODE,            /* u8 */
@@ -183,7 +173,7 @@ enum OVS_PACKED_ENUM mf_field_id {
  * A field may only be matched if the correct lower-level protocols are also
  * matched.  For example, the TCP port may be matched only if the Ethernet type
  * matches ETH_TYPE_IP and the IP protocol matches IPPROTO_TCP. */
-enum OVS_PACKED_ENUM mf_prereqs {
+enum mf_prereqs {
     MFP_NONE,
 
     /* L2 requirements. */
@@ -199,7 +189,6 @@ enum OVS_PACKED_ENUM mf_prereqs {
     /* L2+L3 requirements. */
     MFP_TCP,                    /* On IPv4 or IPv6. */
     MFP_UDP,                    /* On IPv4 or IPv6. */
-    MFP_SCTP,                   /* On IPv4 or IPv6. */
     MFP_ICMPV4,
     MFP_ICMPV6,
 
@@ -212,13 +201,13 @@ enum OVS_PACKED_ENUM mf_prereqs {
 /* Forms of partial-field masking allowed for a field.
  *
  * Every field may be masked as a whole. */
-enum OVS_PACKED_ENUM mf_maskable {
+enum mf_maskable {
     MFM_NONE,                   /* No sub-field masking. */
     MFM_FULLY,                  /* Every bit is individually maskable. */
 };
 
 /* How to format or parse a field's value. */
-enum OVS_PACKED_ENUM mf_string {
+enum mf_string {
     /* Integer formats.
      *
      * The particular MFS_* constant sets the output format.  On input, either
@@ -231,10 +220,8 @@ enum OVS_PACKED_ENUM mf_string {
     MFS_IPV4,
     MFS_IPV6,
     MFS_OFP_PORT,               /* An OpenFlow port number or name. */
-    MFS_OFP_PORT_OXM,           /* An OpenFlow port number or name (32-bit). */
     MFS_FRAG,                   /* no, yes, first, later, not_later */
     MFS_TNL_FLAGS,              /* FLOW_TNL_F_* flags */
-    MFS_TCP_FLAGS,              /* TCP_* flags */
 };
 
 struct mf_field {
@@ -287,35 +274,19 @@ struct mf_field {
     uint32_t nxm_header;        /* An NXM_* (or OXM_*) constant. */
     const char *nxm_name;       /* The nxm_header constant's name. */
     uint32_t oxm_header;        /* An OXM_* (or NXM_*) constant. */
-    const char *oxm_name;       /* The oxm_header constant's name */
-
-    /* Usable protocols.
-     * NXM and OXM are extensible, allowing later extensions to be sent in
-     * earlier protocol versions, so this does not necessarily correspond to
-     * the OpenFlow protocol version the field was introduced in.
-     * Also, some field types are tranparently mapped to each other via the
-     * struct flow (like vlan and dscp/tos fields), so each variant supports
-     * all protocols. */
-    enum ofputil_protocol usable_protocols; /* If fully/cidr masked. */
-    /* If partially/non-cidr masked. */
-    enum ofputil_protocol usable_protocols_bitwise;
-
-    int flow_be32ofs;  /* Field's be32 offset in "struct flow", if prefix tree
-                        * lookup is supported for the field, or -1. */
+    const char *oxm_name;	    /* The oxm_header constant's name */
 };
 
 /* The representation of a field's value. */
 union mf_value {
-    struct in6_addr ipv6;
-    uint8_t mac[ETH_ADDR_LEN];
-    ovs_be64 be64;
-    ovs_be32 be32;
-    ovs_be16 be16;
     uint8_t u8;
+    ovs_be16 be16;
+    ovs_be32 be32;
+    ovs_be64 be64;
+    uint8_t mac[ETH_ADDR_LEN];
+    struct in6_addr ipv6;
 };
 BUILD_ASSERT_DECL(sizeof(union mf_value) == 16);
-
-#define MF_EXACT_MASK_INITIALIZER { IN6ADDR_EXACT_INIT }
 
 /* Part of a field. */
 struct mf_subfield {
@@ -338,17 +309,10 @@ union mf_subvalue {
 BUILD_ASSERT_DECL(sizeof(union mf_value) == sizeof (union mf_subvalue));
 
 /* Finding mf_fields. */
+const struct mf_field *mf_from_id(enum mf_field_id);
 const struct mf_field *mf_from_name(const char *name);
 const struct mf_field *mf_from_nxm_header(uint32_t nxm_header);
 const struct mf_field *mf_from_nxm_name(const char *nxm_name);
-
-static inline const struct mf_field *
-mf_from_id(enum mf_field_id id)
-{
-    extern const struct mf_field mf_fields[MFF_N_IDS];
-    ovs_assert((unsigned int) id < MFF_N_IDS);
-    return &mf_fields[id];
-}
 
 /* Inspecting wildcarded bits. */
 bool mf_is_all_wild(const struct mf_field *, const struct flow_wildcards *);
@@ -359,7 +323,7 @@ void mf_get_mask(const struct mf_field *, const struct flow_wildcards *,
 
 /* Prerequisites. */
 bool mf_are_prereqs_ok(const struct mf_field *, const struct flow *);
-void mf_mask_field_and_prereqs(const struct mf_field *, struct flow *mask);
+void mf_force_prereqs(const struct mf_field *, struct match *);
 
 /* Field values. */
 bool mf_is_value_valid(const struct mf_field *, const union mf_value *value);
@@ -371,18 +335,16 @@ void mf_set_value(const struct mf_field *, const union mf_value *value,
 void mf_set_flow_value(const struct mf_field *, const union mf_value *value,
                        struct flow *);
 bool mf_is_zero(const struct mf_field *, const struct flow *);
-void mf_mask_field(const struct mf_field *, struct flow *);
 
 void mf_get(const struct mf_field *, const struct match *,
             union mf_value *value, union mf_value *mask);
-
-/* Returns the set of usable protocols. */
-enum ofputil_protocol mf_set(const struct mf_field *,
-                             const union mf_value *value,
-                             const union mf_value *mask,
-                             struct match *);
+void mf_set(const struct mf_field *,
+            const union mf_value *value, const union mf_value *mask,
+            struct match *);
 
 void mf_set_wild(const struct mf_field *, struct match *);
+
+void mf_random_value(const struct mf_field *, union mf_value *value);
 
 /* Subfields. */
 void mf_write_subfield_flow(const struct mf_subfield *,
@@ -396,10 +358,8 @@ uint64_t mf_get_subfield(const struct mf_subfield *, const struct flow *);
 
 
 void mf_format_subfield(const struct mf_subfield *, struct ds *);
-char *mf_parse_subfield__(struct mf_subfield *sf, const char **s)
-    WARN_UNUSED_RESULT;
-char *mf_parse_subfield(struct mf_subfield *, const char *s)
-    WARN_UNUSED_RESULT;
+char *mf_parse_subfield__(struct mf_subfield *sf, const char **s);
+const char *mf_parse_subfield(struct mf_subfield *, const char *);
 
 enum ofperr mf_check_src(const struct mf_subfield *, const struct flow *);
 enum ofperr mf_check_dst(const struct mf_subfield *, const struct flow *);

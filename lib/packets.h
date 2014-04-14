@@ -26,42 +26,10 @@
 #include "flow.h"
 #include "openvswitch/types.h"
 #include "random.h"
-#include "hash.h"
 #include "util.h"
 
 struct ofpbuf;
 struct ds;
-
-/* Datapath packet metadata */
-struct pkt_metadata {
-    uint32_t recirc_id;         /* Recirculation id carried with the
-                                   recirculating packets. 0 for packets
-                                   received from the wire. */
-    uint32_t dp_hash;           /* hash value computed by the recirculation
-                                   action. */
-    struct flow_tnl tunnel;     /* Encapsulating tunnel parameters. */
-    uint32_t skb_priority;      /* Packet priority for QoS. */
-    uint32_t pkt_mark;          /* Packet mark. */
-    union flow_in_port in_port; /* Input port. */
-};
-
-#define PKT_METADATA_INITIALIZER(PORT) \
-    (struct pkt_metadata){ 0, 0, { 0, 0, 0, 0, 0, 0}, 0, 0, {(PORT)} }
-
-static inline struct pkt_metadata
-pkt_metadata_from_flow(const struct flow *flow)
-{
-    struct pkt_metadata md;
-
-    md.recirc_id = flow->recirc_id;
-    md.dp_hash = flow->dp_hash;
-    md.tunnel = flow->tunnel;
-    md.skb_priority = flow->skb_priority;
-    md.pkt_mark = flow->pkt_mark;
-    md.in_port = flow->in_port;
-
-    return md;
-}
 
 bool dpid_from_string(const char *s, uint64_t *dpidp);
 
@@ -75,9 +43,6 @@ static const uint8_t eth_addr_stp[ETH_ADDR_LEN] OVS_UNUSED
 
 static const uint8_t eth_addr_lacp[ETH_ADDR_LEN] OVS_UNUSED
     = { 0x01, 0x80, 0xC2, 0x00, 0x00, 0x02 };
-
-static const uint8_t eth_addr_bfd[ETH_ADDR_LEN] OVS_UNUSED
-    = { 0x00, 0x23, 0x20, 0x00, 0x00, 0x01 };
 
 static inline bool eth_addr_is_broadcast(const uint8_t ea[6])
 {
@@ -135,11 +100,6 @@ static inline uint64_t eth_addr_to_uint64(const uint8_t ea[ETH_ADDR_LEN])
             | ((uint64_t) ea[4] << 8)
             | ea[5]);
 }
-static inline uint64_t eth_addr_vlan_to_uint64(const uint8_t ea[ETH_ADDR_LEN],
-                                               uint16_t vlan)
-{
-    return (((uint64_t)vlan << 48) | eth_addr_to_uint64(ea));
-}
 static inline void eth_addr_from_uint64(uint64_t x, uint8_t ea[ETH_ADDR_LEN])
 {
     ea[0] = x >> 40;
@@ -171,19 +131,18 @@ static inline void eth_addr_nicira_random(uint8_t ea[ETH_ADDR_LEN])
     /* Set the top bit to indicate random Nicira address. */
     ea[3] |= 0x80;
 }
-static inline uint32_t hash_mac(const uint8_t ea[ETH_ADDR_LEN],
-                                const uint16_t vlan, const uint32_t basis)
-{
-    return hash_uint64_basis(eth_addr_vlan_to_uint64(ea, vlan), basis);
-}
 
 bool eth_addr_is_reserved(const uint8_t ea[ETH_ADDR_LEN]);
 bool eth_addr_from_string(const char *, uint8_t ea[ETH_ADDR_LEN]);
 
 void compose_rarp(struct ofpbuf *, const uint8_t eth_src[ETH_ADDR_LEN]);
 
-void eth_push_vlan(struct ofpbuf *, ovs_be16 tpid, ovs_be16 tci);
+void eth_push_vlan(struct ofpbuf *, ovs_be16 tci);
 void eth_pop_vlan(struct ofpbuf *);
+
+uint16_t eth_mpls_depth(const struct ofpbuf *packet);
+
+void set_ethertype(struct ofpbuf *packet, ovs_be16 eth_type);
 
 const char *eth_from_hex(const char *hex, struct ofpbuf **packetp);
 void eth_format_masked(const uint8_t eth[ETH_ADDR_LEN],
@@ -221,14 +180,15 @@ ovs_be32 set_mpls_lse_values(uint8_t ttl, uint8_t tc, uint8_t bos,
  * uint8_t mac[ETH_ADDR_LEN];
  * int a, b;
  *
- * if (ovs_scan(string, "%d"ETH_ADDR_SCAN_FMT"%d",
- *              &a, ETH_ADDR_SCAN_ARGS(mac), &b)) {
+ * if (sscanf(string, "%d"ETH_ADDR_SCAN_FMT"%d",
+ *     &a, ETH_ADDR_SCAN_ARGS(mac), &b) == 1 + ETH_ADDR_SCAN_COUNT + 1) {
  *     ...
  * }
  */
 #define ETH_ADDR_SCAN_FMT "%"SCNx8":%"SCNx8":%"SCNx8":%"SCNx8":%"SCNx8":%"SCNx8
 #define ETH_ADDR_SCAN_ARGS(ea) \
         &(ea)[0], &(ea)[1], &(ea)[2], &(ea)[3], &(ea)[4], &(ea)[5]
+#define ETH_ADDR_SCAN_COUNT 6
 
 #define ETH_TYPE_IP            0x0800
 #define ETH_TYPE_ARP           0x0806
@@ -257,12 +217,13 @@ static inline bool eth_type_mpls(ovs_be16 eth_type)
 #define ETH_TOTAL_MIN (ETH_HEADER_LEN + ETH_PAYLOAD_MIN)
 #define ETH_TOTAL_MAX (ETH_HEADER_LEN + ETH_PAYLOAD_MAX)
 #define ETH_VLAN_TOTAL_MAX (ETH_HEADER_LEN + VLAN_HEADER_LEN + ETH_PAYLOAD_MAX)
-OVS_PACKED(
+PACKED_STRUCT
 struct eth_header {
     uint8_t eth_dst[ETH_ADDR_LEN];
     uint8_t eth_src[ETH_ADDR_LEN];
     ovs_be16 eth_type;
-});
+};
+END_PACKED_STRUCT
 BUILD_ASSERT_DECL(ETH_HEADER_LEN == sizeof(struct eth_header));
 
 #define LLC_DSAP_SNAP 0xaa
@@ -270,31 +231,34 @@ BUILD_ASSERT_DECL(ETH_HEADER_LEN == sizeof(struct eth_header));
 #define LLC_CNTL_SNAP 3
 
 #define LLC_HEADER_LEN 3
-OVS_PACKED(
+PACKED_STRUCT
 struct llc_header {
     uint8_t llc_dsap;
     uint8_t llc_ssap;
     uint8_t llc_cntl;
-});
+};
+END_PACKED_STRUCT
 BUILD_ASSERT_DECL(LLC_HEADER_LEN == sizeof(struct llc_header));
 
 #define SNAP_ORG_ETHERNET "\0\0" /* The compiler adds a null byte, so
                                     sizeof(SNAP_ORG_ETHERNET) == 3. */
 #define SNAP_HEADER_LEN 5
-OVS_PACKED(
+PACKED_STRUCT
 struct snap_header {
     uint8_t snap_org[3];
     ovs_be16 snap_type;
-});
-BUILD_ASSERT_DECL(SNAP_HEADER_LEN == sizeof(struct snap_header));
+};
+END_PACKED_STRUCT
+//BUILD_ASSERT_DECL(SNAP_HEADER_LEN == sizeof(struct snap_header));
 
 #define LLC_SNAP_HEADER_LEN (LLC_HEADER_LEN + SNAP_HEADER_LEN)
-OVS_PACKED(
+PACKED_STRUCT
 struct llc_snap_header {
     struct llc_header llc;
     struct snap_header snap;
-});
-BUILD_ASSERT_DECL(LLC_SNAP_HEADER_LEN == sizeof(struct llc_snap_header));
+};
+END_PACKED_STRUCT
+//BUILD_ASSERT_DECL(LLC_SNAP_HEADER_LEN == sizeof(struct llc_snap_header));
 
 #define VLAN_VID_MASK 0x0fff
 #define VLAN_VID_SHIFT 0
@@ -337,14 +301,15 @@ struct vlan_header {
 BUILD_ASSERT_DECL(VLAN_HEADER_LEN == sizeof(struct vlan_header));
 
 #define VLAN_ETH_HEADER_LEN (ETH_HEADER_LEN + VLAN_HEADER_LEN)
-OVS_PACKED(
+PACKED_STRUCT
 struct vlan_eth_header {
     uint8_t veth_dst[ETH_ADDR_LEN];
     uint8_t veth_src[ETH_ADDR_LEN];
     ovs_be16 veth_type;         /* Always htons(ETH_TYPE_VLAN). */
     ovs_be16 veth_tci;          /* Lowest 12 bits are VLAN ID. */
     ovs_be16 veth_next_type;
-});
+};
+END_PACKED_STRUCT
 BUILD_ASSERT_DECL(VLAN_ETH_HEADER_LEN == sizeof(struct vlan_eth_header));
 
 /* MPLS related definitions */
@@ -363,7 +328,7 @@ BUILD_ASSERT_DECL(VLAN_ETH_HEADER_LEN == sizeof(struct vlan_eth_header));
 #define MPLS_HLEN           4
 
 struct mpls_hdr {
-    ovs_16aligned_be32 mpls_lse;
+    ovs_be32 mpls_lse;
 };
 BUILD_ASSERT_DECL(MPLS_HLEN == sizeof(struct mpls_hdr));
 
@@ -420,7 +385,8 @@ mpls_lse_to_bos(ovs_be32 mpls_lse)
  * ovs_be32 ip;
  * int a, b;
  *
- * if (ovs_scan(string, "%d"IP_SCAN_FMT"%d", &a, IP_SCAN_ARGS(&ip), &b)) {
+ * if (sscanf(string, "%d"IP_SCAN_FMT"%d",
+ *     &a, IP_SCAN_ARGS(&ip), &b) == 1 + IP_SCAN_COUNT + 1) {
  *     ...
  * }
  */
@@ -430,6 +396,7 @@ mpls_lse_to_bos(ovs_be32 mpls_lse)
         &((uint8_t *) ip)[1],                               \
         &((uint8_t *) ip)[2],                               \
         &((uint8_t *) ip)[3]
+#define IP_SCAN_COUNT 4
 
 /* Returns true if 'netmask' is a CIDR netmask, that is, if it consists of N
  * high-order 1-bits and 32-N low-order 0-bits. */
@@ -481,8 +448,8 @@ struct ip_header {
     uint8_t ip_ttl;
     uint8_t ip_proto;
     ovs_be16 ip_csum;
-    ovs_16aligned_be32 ip_src;
-    ovs_16aligned_be32 ip_dst;
+    ovs_be32 ip_src;
+    ovs_be32 ip_dst;
 };
 BUILD_ASSERT_DECL(IP_HEADER_LEN == sizeof(struct ip_header));
 
@@ -500,20 +467,11 @@ struct icmp_header {
             ovs_be16 empty;
             ovs_be16 mtu;
         } frag;
-        ovs_16aligned_be32 gateway;
+        ovs_be32 gateway;
     } icmp_fields;
     uint8_t icmp_data[0];
 };
 BUILD_ASSERT_DECL(ICMP_HEADER_LEN == sizeof(struct icmp_header));
-
-#define SCTP_HEADER_LEN 12
-struct sctp_header {
-    ovs_be16 sctp_src;
-    ovs_be16 sctp_dst;
-    ovs_16aligned_be32 sctp_vtag;
-    ovs_16aligned_be32 sctp_csum;
-};
-BUILD_ASSERT_DECL(SCTP_HEADER_LEN == sizeof(struct sctp_header));
 
 #define UDP_HEADER_LEN 8
 struct udp_header {
@@ -524,26 +482,23 @@ struct udp_header {
 };
 BUILD_ASSERT_DECL(UDP_HEADER_LEN == sizeof(struct udp_header));
 
-#define TCP_FIN 0x001
-#define TCP_SYN 0x002
-#define TCP_RST 0x004
-#define TCP_PSH 0x008
-#define TCP_ACK 0x010
-#define TCP_URG 0x020
-#define TCP_ECE 0x040
-#define TCP_CWR 0x080
-#define TCP_NS  0x100
+#define TCP_FIN 0x01
+#define TCP_SYN 0x02
+#define TCP_RST 0x04
+#define TCP_PSH 0x08
+#define TCP_ACK 0x10
+#define TCP_URG 0x20
 
 #define TCP_CTL(flags, offset) (htons((flags) | ((offset) << 12)))
-#define TCP_FLAGS(tcp_ctl) (ntohs(tcp_ctl) & 0x0fff)
+#define TCP_FLAGS(tcp_ctl) (ntohs(tcp_ctl) & 0x003f)
 #define TCP_OFFSET(tcp_ctl) (ntohs(tcp_ctl) >> 12)
 
 #define TCP_HEADER_LEN 20
 struct tcp_header {
     ovs_be16 tcp_src;
     ovs_be16 tcp_dst;
-    ovs_16aligned_be32 tcp_seq;
-    ovs_16aligned_be32 tcp_ack;
+    ovs_be32 tcp_seq;
+    ovs_be32 tcp_ack;
     ovs_be16 tcp_ctl;
     ovs_be16 tcp_winsz;
     ovs_be16 tcp_csum;
@@ -558,6 +513,7 @@ BUILD_ASSERT_DECL(TCP_HEADER_LEN == sizeof(struct tcp_header));
 #define ARP_OP_RARP 3
 
 #define ARP_ETH_HEADER_LEN 28
+PACKED_STRUCT
 struct arp_eth_header {
     /* Generic members. */
     ovs_be16 ar_hrd;           /* Hardware type. */
@@ -568,43 +524,12 @@ struct arp_eth_header {
 
     /* Ethernet+IPv4 specific members. */
     uint8_t ar_sha[ETH_ADDR_LEN]; /* Sender hardware address. */
-    ovs_16aligned_be32 ar_spa;           /* Sender protocol address. */
+    ovs_be32 ar_spa;           /* Sender protocol address. */
     uint8_t ar_tha[ETH_ADDR_LEN]; /* Target hardware address. */
-    ovs_16aligned_be32 ar_tpa;           /* Target protocol address. */
+    ovs_be32 ar_tpa;           /* Target protocol address. */
 };
-BUILD_ASSERT_DECL(ARP_ETH_HEADER_LEN == sizeof(struct arp_eth_header));
-
-/* Like struct in6_addr, but whereas that struct requires 32-bit alignment on
- * most implementations, this one only requires 16-bit alignment. */
-union ovs_16aligned_in6_addr {
-    ovs_be16 be16[8];
-    ovs_16aligned_be32 be32[4];
-};
-
-/* Like struct in6_hdr, but whereas that struct requires 32-bit alignment, this
- * one only requires 16-bit alignment. */
-struct ovs_16aligned_ip6_hdr {
-    union {
-        struct ovs_16aligned_ip6_hdrctl {
-            ovs_16aligned_be32 ip6_un1_flow;
-            ovs_be16 ip6_un1_plen;
-            uint8_t ip6_un1_nxt;
-            uint8_t ip6_un1_hlim;
-        } ip6_un1;
-        uint8_t ip6_un2_vfc;
-    } ip6_ctlun;
-    union ovs_16aligned_in6_addr ip6_src;
-    union ovs_16aligned_in6_addr ip6_dst;
-};
-
-/* Like struct in6_frag, but whereas that struct requires 32-bit alignment,
- * this one only requires 16-bit alignment. */
-struct ovs_16aligned_ip6_frag {
-    uint8_t ip6f_nxt;
-    uint8_t ip6f_reserved;
-    ovs_be16 ip6f_offlg;
-    ovs_16aligned_be32 ip6f_ident;
-};
+END_PACKED_STRUCT
+//BUILD_ASSERT_DECL(ARP_ETH_HEADER_LEN == sizeof(struct arp_eth_header));
 
 /* The IPv6 flow label is in the lower 20 bits of the first 32-bit word. */
 #define IPV6_LABEL_MASK 0x000fffff
@@ -615,7 +540,7 @@ struct ovs_16aligned_ip6_frag {
  * char ipv6_s[IPV6_SCAN_LEN + 1];
  * struct in6_addr ipv6;
  *
- * if (ovs_scan(string, "%d"IPV6_SCAN_FMT"%d", &a, ipv6_s, &b)
+ * if (sscanf(string, "%d"IPV6_SCAN_FMT"%d", &a, ipv6_s, &b) == 3
  *     && inet_pton(AF_INET6, ipv6_s, &ipv6) == 1) {
  *     ...
  * }
@@ -691,9 +616,8 @@ void packet_set_ipv6(struct ofpbuf *, uint8_t proto, const ovs_be32 src[4],
                      ovs_be32 fl, uint8_t hlmit);
 void packet_set_tcp_port(struct ofpbuf *, ovs_be16 src, ovs_be16 dst);
 void packet_set_udp_port(struct ofpbuf *, ovs_be16 src, ovs_be16 dst);
-void packet_set_sctp_port(struct ofpbuf *, ovs_be16 src, ovs_be16 dst);
 
-void packet_format_tcp_flags(struct ds *, uint16_t);
-const char *packet_tcp_flag_to_string(uint32_t flag);
+uint8_t packet_get_tcp_flags(const struct ofpbuf *, const struct flow *);
+void packet_format_tcp_flags(struct ds *, uint8_t);
 
 #endif /* packets.h */

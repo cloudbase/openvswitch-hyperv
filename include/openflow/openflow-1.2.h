@@ -1,4 +1,4 @@
-/* Copyright (c) 2008, 2011, 2012, 2013 The Board of Trustees of The Leland Stanford
+/* Copyright (c) 2008, 2011, 2012 The Board of Trustees of The Leland Stanford
  * Junior University
  *
  * We are making the OpenFlow specification and associated documentation
@@ -55,9 +55,6 @@
 
 #include "openflow/openflow-1.1.h"
 
-/* Error type for experimenter error messages. */
-#define OFPET12_EXPERIMENTER 0xffff
-
 /*
  * OXM Class IDs.
  * The high order bit differentiate reserved classes from member classes.
@@ -109,15 +106,17 @@ enum oxm12_ofb_match_fields {
     OFPXMT12_OFB_IPV6_ND_TLL,    /* Target link-layer for ND. */
     OFPXMT12_OFB_MPLS_LABEL,     /* MPLS label. */
     OFPXMT12_OFB_MPLS_TC,        /* MPLS TC. */
-#define OFPXMT12_MASK ((1ULL << (OFPXMT12_OFB_MPLS_TC + 1)) - 1)
-
     /* Following added in OpenFlow 1.3 */
-    OFPXMT13_OFB_MPLS_BOS,       /* MPLS BoS bit. */
-    OFPXMT13_OFB_PBB_ISID,       /* PBB I-SID. */
-    OFPXMT13_OFB_TUNNEL_ID,      /* Logical Port Metadata */
-    OFPXMT13_OFB_IPV6_EXTHDR,    /* IPv6 Extension Header pseudo-field */
-#define OFPXMT13_MASK ((1ULL << (OFPXMT13_OFB_IPV6_EXTHDR + 1)) - 1)
+    OFPXMT12_OFB_MPLS_BOS,       /* MPLS BoS bit. */
+    OFPXMT12_OFB_PBB_ISID,       /* PBB I-SID. */
+    OFPXMT12_OFB_TUNNEL_ID,      /* Logical Port Metadata */
+    OFPXMT12_OFB_IPV6_EXTHDR,    /* IPv6 Extension Header pseudo-field */
+
+    /* End Marker */
+    OFPXMT12_OFB_MAX,
 };
+
+#define OFPXMT12_MASK ((1ULL << OFPXMT12_OFB_MAX) - 1)
 
 /* OXM implementation makes use of NXM as they are the same format
  * with different field definitions
@@ -178,13 +177,13 @@ enum oxm12_ofb_match_fields {
 #define OXM_OF_IPV6_ND_TLL    OXM_HEADER   (OFPXMT12_OFB_IPV6_ND_TLL, 6)
 #define OXM_OF_MPLS_LABEL     OXM_HEADER   (OFPXMT12_OFB_MPLS_LABEL, 4)
 #define OXM_OF_MPLS_TC        OXM_HEADER   (OFPXMT12_OFB_MPLS_TC, 1)
-#define OXM_OF_MPLS_BOS       OXM_HEADER   (OFPXMT13_OFB_MPLS_BOS, 1)
-#define OXM_OF_PBB_ISID       OXM_HEADER   (OFPXMT12_OFB_PBB_ISID, 3)
-#define OXM_OF_PBB_ISID_W     OXM_HEADER_W (OFPXMT12_OFB_PBB_ISID, 3)
-#define OXM_OF_TUNNEL_ID      OXM_HEADER   (OFPXMT13_OFB_TUNNEL_ID, 8)
-#define OXM_OF_TUNNEL_ID_W    OXM_HEADER_W (OFPXMT13_OFB_TUNNEL_ID, 8)
-#define OXM_OF_IPV6_EXTHDR    OXM_HEADER   (OFPXMT13_OFB_IPV6_EXTHDR, 2)
-#define OXM_OF_IPV6_EXTHDR_W  OXM_HEADER_W (OFPXMT13_OFB_IPV6_EXTHDR, 2)
+#define OXM_OF_MPLS_BOS       OXM_HEADER   (OFPXMT12_OFB_MPLS_BOS, 1)
+#define OXM_OF_PBB_ISID       OXM_HEADER   (OFPXMT12_OFB_PBB_ISID, 4)
+#define OXM_OF_PBB_ISID_W     OXM_HEADER_W (OFPXMT12_OFB_PBB_ISID, 4)
+#define OXM_OF_TUNNEL_ID      OXM_HEADER   (OFPXMT12_OFB_TUNNEL_ID, 8)
+#define OXM_OF_TUNNEL_ID_W    OXM_HEADER_W (OFPXMT12_OFB_TUNNEL_ID, 8)
+#define OXM_OF_IPV6_EXTHDR    OXM_HEADER   (OFPXMT12_OFB_IPV6_EXTHDR, 2)
+#define OXM_OF_IPV6_EXTHDR_W  OXM_HEADER_W (OFPXMT12_OFB_IPV6_EXTHDR, 2)
 
 /* The VLAN id is 12-bits, so we can use the entire 16 bits to indicate
  * special conditions.
@@ -251,16 +250,22 @@ enum ofp12_capabilities {
     OFPC12_PORT_BLOCKED   = 1 << 8   /* Switch will block looping ports. */
 };
 
-/* Full description for a queue. */
-struct ofp12_packet_queue {
-    ovs_be32 queue_id;     /* id for the specific queue. */
-    ovs_be32 port;         /* Port this queue is attached to. */
-    ovs_be16 len;          /* Length in bytes of this queue desc. */
-    uint8_t pad[6];        /* 64-bit alignment. */
-    /* Followed by any number of queue properties expressed using
-     * ofp_queue_prop_header, to fill out a total of 'len' bytes. */
+/* OpenFlow 1.2 specific types
+ * (struct ofp11_stats_request/reply, member type). */
+enum ofp12_stats_types {
+    /* Group features.
+     * The request body is empty.
+     * The reply body is struct ofp12_group_features_stats. */
+    OFPST12_GROUP_FEATURES = 8
 };
-OFP_ASSERT(sizeof(struct ofp12_packet_queue) == 16);
+
+/* OpenFlow 1.2 specific properties
+ * (struct ofp_queue_prop_header member property). */
+enum ofp12_queue_properties {
+    OFPQT12_MIN_RATE = 1,         /* Minimum datarate guaranteed. */
+    OFPQT12_MAX_RATE = 2,         /* Maximum datarate. */
+    OFPQT12_EXPERIMENTER = 0xffff /* Experimenter defined property. */
+};
 
 /* Body of reply to OFPST_TABLE request. */
 struct ofp12_table_stats {
@@ -293,7 +298,7 @@ OFP_ASSERT(sizeof(struct ofp12_table_stats) == 128);
 
 /* Body of reply to OFPST12_GROUP_FEATURES request. Group features. */
 struct ofp12_group_features_stats {
-    ovs_be32  types;           /* Bitmap of OFPGT11_* values supported. */
+    ovs_be32  types;           /* Bitmap of OFPGT_* values supported. */
     ovs_be32  capabilities;    /* Bitmap of OFPGFC12_* capability supported. */
     ovs_be32  max_groups[4];   /* Maximum number of groups for each type. */
     ovs_be32  actions[4];      /* Bitmaps of OFPAT_* that are supported. */

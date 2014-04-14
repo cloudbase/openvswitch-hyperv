@@ -21,7 +21,6 @@
 #include <signal.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -29,7 +28,6 @@
 #include "dynamic-string.h"
 #include "fatal-signal.h"
 #include "list.h"
-#include "ovs-thread.h"
 #include "poll-loop.h"
 #include "signals.h"
 #include "socket-util.h"
@@ -38,6 +36,9 @@
 
 VLOG_DEFINE_THIS_MODULE(process);
 
+COVERAGE_DEFINE(process_run);
+COVERAGE_DEFINE(process_run_capture);
+COVERAGE_DEFINE(process_sigchld);
 COVERAGE_DEFINE(process_start);
 
 struct process {
@@ -45,9 +46,9 @@ struct process {
     char *name;
     pid_t pid;
 
-    /* State. */
-    bool exited;
-    int status;
+    /* Modified by signal handler. */
+    volatile bool exited;
+    volatile int status;
 };
 
 /* Pipe used to signal child termination. */
@@ -56,12 +57,14 @@ static int fds[2];
 /* All processes. */
 static struct list all_processes = LIST_INITIALIZER(&all_processes);
 
+static bool sigchld_is_blocked(void);
+static void block_sigchld(sigset_t *);
+static void unblock_sigchld(const sigset_t *);
 static void sigchld_handler(int signr OVS_UNUSED);
+static bool is_member(int x, const int *array, size_t);
 
 /* Initializes the process subsystem (if it is not already initialized).  Calls
  * exit() if initialization fails.
- *
- * This function may not be called after creating any additional threads.
  *
  * Calling this function is optional; it will be called automatically by
  * process_start() if necessary.  Calling it explicitly allows the client to
@@ -69,11 +72,9 @@ static void sigchld_handler(int signr OVS_UNUSED);
 void
 process_init(void)
 {
-#ifndef _WIN32
     static bool inited;
     struct sigaction sa;
 
-    assert_single_threaded();
     if (inited) {
         return;
     }
@@ -88,7 +89,6 @@ process_init(void)
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = SA_NOCLDSTOP | SA_RESTART;
     xsigaction(SIGCHLD, &sa, NULL);
-#endif
 }
 
 char *
@@ -148,12 +148,17 @@ process_prestart(char **argv)
 }
 
 /* Creates and returns a new struct process with the specified 'name' and
- * 'pid'. */
+ * 'pid'.
+ *
+ * This is racy unless SIGCHLD is blocked (and has been blocked since before
+ * the fork()) that created the subprocess.  */
 static struct process *
 process_register(const char *name, pid_t pid)
 {
     struct process *p;
     const char *slash;
+
+    ovs_assert(sigchld_is_blocked());
 
     p = xzalloc(sizeof *p);
     p->pid = pid;
@@ -166,69 +171,27 @@ process_register(const char *name, pid_t pid)
     return p;
 }
 
-#ifndef _WIN32
-static bool
-rlim_is_finite(rlim_t limit)
-{
-    if (limit == RLIM_INFINITY) {
-        return false;
-    }
-
-#ifdef RLIM_SAVED_CUR           /* FreeBSD 8.0 lacks RLIM_SAVED_CUR. */
-    if (limit == RLIM_SAVED_CUR) {
-        return false;
-    }
-#endif
-
-#ifdef RLIM_SAVED_MAX           /* FreeBSD 8.0 lacks RLIM_SAVED_MAX. */
-    if (limit == RLIM_SAVED_MAX) {
-        return false;
-    }
-#endif
-
-    return true;
-}
-
-/* Returns the maximum valid FD value, plus 1. */
-static int
-get_max_fds(void)
-{
-    static int max_fds;
-
-    if (!max_fds) {
-        struct rlimit r;
-        if (!getrlimit(RLIMIT_NOFILE, &r) && rlim_is_finite(r.rlim_cur)) {
-            max_fds = r.rlim_cur;
-        } else {
-            VLOG_WARN("failed to obtain fd limit, defaulting to 1024");
-            max_fds = 1024;
-        }
-    }
-
-    return max_fds;
-}
-#endif /* _WIN32 */
-
 /* Starts a subprocess with the arguments in the null-terminated argv[] array.
  * argv[0] is used as the name of the process.  Searches the PATH environment
  * variable to find the program to execute.
  *
- * This function may not be called after creating any additional threads.
- *
  * All file descriptors are closed before executing the subprocess, except for
- * fds 0, 1, and 2.
+ * fds 0, 1, and 2 and the 'n_keep_fds' fds listed in 'keep_fds'.  Also, any of
+ * the 'n_null_fds' fds listed in 'null_fds' are replaced by /dev/null.
  *
  * Returns 0 if successful, otherwise a positive errno value indicating the
  * error.  If successful, '*pp' is assigned a new struct process that may be
  * used to query the process's status.  On failure, '*pp' is set to NULL. */
 int
-process_start(char **argv, struct process **pp)
+process_start(char **argv,
+              const int keep_fds[], size_t n_keep_fds,
+              const int null_fds[], size_t n_null_fds,
+              struct process **pp)
 {
-#ifndef _WIN32
+    sigset_t oldsigs;
+    int nullfd;
     pid_t pid;
     int error;
-
-    assert_single_threaded();
 
     *pp = NULL;
     COVERAGE_INC(process_start);
@@ -237,13 +200,25 @@ process_start(char **argv, struct process **pp)
         return error;
     }
 
+    if (n_null_fds) {
+        nullfd = get_null_fd();
+        if (nullfd < 0) {
+            return -nullfd;
+        }
+    } else {
+        nullfd = -1;
+    }
+
+    block_sigchld(&oldsigs);
     pid = fork();
     if (pid < 0) {
-        VLOG_WARN("fork failed: %s", ovs_strerror(errno));
+        unblock_sigchld(&oldsigs);
+        VLOG_WARN("fork failed: %s", strerror(errno));
         return errno;
     } else if (pid) {
         /* Running in parent process. */
         *pp = process_register(argv[0], pid);
+        unblock_sigchld(&oldsigs);
         return 0;
     } else {
         /* Running in child process. */
@@ -251,18 +226,25 @@ process_start(char **argv, struct process **pp)
         int fd;
 
         fatal_signal_fork();
-        for (fd = 3; fd < fd_max; fd++) {
-            close(fd);
+        unblock_sigchld(&oldsigs);
+        for (fd = 0; fd < fd_max; fd++) {
+            if (is_member(fd, null_fds, n_null_fds)) {
+                dup2(nullfd, fd);
+            } else if (fd >= 3 && fd != nullfd
+                       && !is_member(fd, keep_fds, n_keep_fds)) {
+                close(fd);
+            }
+        }
+        if (nullfd >= 0
+            && !is_member(nullfd, keep_fds, n_keep_fds)
+            && !is_member(nullfd, null_fds, n_null_fds)) {
+            close(nullfd);
         }
         execvp(argv[0], argv);
         fprintf(stderr, "execvp(\"%s\") failed: %s\n",
-                argv[0], ovs_strerror(errno));
+                argv[0], strerror(errno));
         _exit(1);
     }
-#else
-    *pp = NULL;
-    return ENOSYS;
-#endif
 }
 
 /* Destroys process 'p'. */
@@ -270,7 +252,12 @@ void
 process_destroy(struct process *p)
 {
     if (p) {
+        sigset_t oldsigs;
+
+        block_sigchld(&oldsigs);
         list_remove(&p->node);
+        unblock_sigchld(&oldsigs);
+
         free(p->name);
         free(p);
     }
@@ -281,13 +268,9 @@ process_destroy(struct process *p)
 int
 process_kill(const struct process *p, int signr)
 {
-#ifndef _WIN32
     return (p->exited ? ESRCH
             : !kill(p->pid, signr) ? 0
             : errno);
-#else
-    return ENOSYS;
-#endif
 }
 
 /* Returns the pid of process 'p'. */
@@ -309,7 +292,13 @@ process_name(const struct process *p)
 bool
 process_exited(struct process *p)
 {
-    return p->exited;
+    if (p->exited) {
+        return true;
+    } else {
+        char buf[_POSIX_PIPE_BUF];
+        ignore(read(fds[0], buf, sizeof buf));
+        return false;
+    }
 }
 
 /* Returns process 'p''s exit status, as reported by waitpid(2).
@@ -322,6 +311,32 @@ process_status(const struct process *p)
     return p->status;
 }
 
+int
+process_run(char **argv,
+            const int keep_fds[], size_t n_keep_fds,
+            const int null_fds[], size_t n_null_fds,
+            int *status)
+{
+    struct process *p;
+    int retval;
+
+    COVERAGE_INC(process_run);
+    retval = process_start(argv, keep_fds, n_keep_fds, null_fds, n_null_fds,
+                           &p);
+    if (retval) {
+        *status = 0;
+        return retval;
+    }
+
+    while (!process_exited(p)) {
+        process_wait(p);
+        poll_block();
+    }
+    *status = process_status(p);
+    process_destroy(p);
+    return 0;
+}
+
 /* Given 'status', which is a process status in the form reported by waitpid(2)
  * and returned by process_status(), returns a string describing how the
  * process terminated.  The caller is responsible for freeing the string when
@@ -330,76 +345,31 @@ char *
 process_status_msg(int status)
 {
     struct ds ds = DS_EMPTY_INITIALIZER;
-#ifndef _WIN32
     if (WIFEXITED(status)) {
         ds_put_format(&ds, "exit status %d", WEXITSTATUS(status));
     } else if (WIFSIGNALED(status)) {
-        char namebuf[SIGNAL_NAME_BUFSIZE];
-
-        ds_put_format(&ds, "killed (%s)",
-                      signal_name(WTERMSIG(status), namebuf, sizeof namebuf));
+        ds_put_format(&ds, "killed (%s)", signal_name(WTERMSIG(status)));
     } else if (WIFSTOPPED(status)) {
-        char namebuf[SIGNAL_NAME_BUFSIZE];
-
-        ds_put_format(&ds, "stopped (%s)",
-                      signal_name(WSTOPSIG(status), namebuf, sizeof namebuf));
+        ds_put_format(&ds, "stopped (%s)", signal_name(WSTOPSIG(status)));
     } else {
         ds_put_format(&ds, "terminated abnormally (%x)", status);
     }
     if (WCOREDUMP(status)) {
         ds_put_cstr(&ds, ", core dumped");
     }
-#else
-    ds_put_cstr(&ds, "function not supported.");
-#endif
     return ds_cstr(&ds);
 }
-
-/* Executes periodic maintenance activities required by the process module. */
-void
-process_run(void)
-{
-#ifndef _WIN32
-    char buf[_POSIX_PIPE_BUF];
-
-    if (!list_is_empty(&all_processes) && read(fds[0], buf, sizeof buf) > 0) {
-        struct process *p;
-
-        LIST_FOR_EACH (p, node, &all_processes) {
-            if (!p->exited) {
-                int retval, status;
-                do {
-                    retval = waitpid(p->pid, &status, WNOHANG);
-                } while (retval == -1 && errno == EINTR);
-                if (retval == p->pid) {
-                    p->exited = true;
-                    p->status = status;
-                } else if (retval < 0) {
-                    VLOG_WARN("waitpid: %s", ovs_strerror(errno));
-                    p->exited = true;
-                    p->status = -1;
-                }
-            }
-        }
-    }
-#endif
-}
-
 
 /* Causes the next call to poll_block() to wake up when process 'p' has
  * exited. */
 void
 process_wait(struct process *p)
 {
-#ifndef _WIN32
     if (p->exited) {
         poll_immediate_wake();
     } else {
         poll_fd_wait(fds[0], POLLIN);
     }
-#else
-    OVS_NOT_REACHED();
-#endif
 }
 
 char *
@@ -427,8 +397,265 @@ process_search_path(const char *name)
     return NULL;
 }
 
+/* process_run_capture() and supporting functions. */
+
+struct stream {
+    size_t max_size;
+    struct ds log;
+    int fds[2];
+};
+
+static int
+stream_open(struct stream *s, size_t max_size)
+{
+    int error;
+
+    s->max_size = max_size;
+    ds_init(&s->log);
+    if (pipe(s->fds)) {
+        VLOG_WARN("failed to create pipe: %s", strerror(errno));
+        return errno;
+    }
+    error = set_nonblocking(s->fds[0]);
+    if (error) {
+        close(s->fds[0]);
+        close(s->fds[1]);
+    }
+    return error;
+}
+
+static void
+stream_read(struct stream *s)
+{
+    if (s->fds[0] < 0) {
+        return;
+    }
+
+    for (;;) {
+        char buffer[512];
+        int error;
+        size_t n;
+
+        error = read_fully(s->fds[0], buffer, sizeof buffer, &n);
+        ds_put_buffer(&s->log, buffer, n);
+        if (error) {
+            if (error == EAGAIN || error == EWOULDBLOCK) {
+                return;
+            } else {
+                if (error != EOF) {
+                    VLOG_WARN("error reading subprocess pipe: %s",
+                              strerror(error));
+                }
+                break;
+            }
+        } else if (s->log.length > s->max_size) {
+            VLOG_WARN("subprocess output overflowed %zu-byte buffer",
+                      s->max_size);
+            break;
+        }
+    }
+    close(s->fds[0]);
+    s->fds[0] = -1;
+}
+
+static void
+stream_wait(struct stream *s)
+{
+    if (s->fds[0] >= 0) {
+        poll_fd_wait(s->fds[0], POLLIN);
+    }
+}
+
+static void
+stream_close(struct stream *s)
+{
+    ds_destroy(&s->log);
+    if (s->fds[0] >= 0) {
+        close(s->fds[0]);
+    }
+    if (s->fds[1] >= 0) {
+        close(s->fds[1]);
+    }
+}
+
+/* Starts the process whose arguments are given in the null-terminated array
+ * 'argv' and waits for it to exit.  On success returns 0 and stores the
+ * process exit value (suitable for passing to process_status_msg()) in
+ * '*status'.  On failure, returns a positive errno value and stores 0 in
+ * '*status'.
+ *
+ * If 'stdout_log' is nonnull, then the subprocess's output to stdout (up to a
+ * limit of 'log_max' bytes) is captured in a memory buffer, which
+ * when this function returns 0 is stored as a null-terminated string in
+ * '*stdout_log'.  The caller is responsible for freeing '*stdout_log' (by
+ * passing it to free()).  When this function returns an error, '*stdout_log'
+ * is set to NULL.
+ *
+ * If 'stderr_log' is nonnull, then it is treated like 'stdout_log' except
+ * that it captures the subprocess's output to stderr. */
+int
+process_run_capture(char **argv, char **stdout_log, char **stderr_log,
+                    size_t max_log, int *status)
+{
+    struct stream s_stdout, s_stderr;
+    sigset_t oldsigs;
+    pid_t pid;
+    int error;
+
+    COVERAGE_INC(process_run_capture);
+    if (stdout_log) {
+        *stdout_log = NULL;
+    }
+    if (stderr_log) {
+        *stderr_log = NULL;
+    }
+    *status = 0;
+    error = process_prestart(argv);
+    if (error) {
+        return error;
+    }
+
+    error = stream_open(&s_stdout, max_log);
+    if (error) {
+        return error;
+    }
+
+    error = stream_open(&s_stderr, max_log);
+    if (error) {
+        stream_close(&s_stdout);
+        return error;
+    }
+
+    block_sigchld(&oldsigs);
+    pid = fork();
+    if (pid < 0) {
+        error = errno;
+
+        unblock_sigchld(&oldsigs);
+        VLOG_WARN("fork failed: %s", strerror(error));
+
+        stream_close(&s_stdout);
+        stream_close(&s_stderr);
+        *status = 0;
+        return error;
+    } else if (pid) {
+        /* Running in parent process. */
+        struct process *p;
+
+        p = process_register(argv[0], pid);
+        unblock_sigchld(&oldsigs);
+
+        close(s_stdout.fds[1]);
+        close(s_stderr.fds[1]);
+        while (!process_exited(p)) {
+            stream_read(&s_stdout);
+            stream_read(&s_stderr);
+
+            stream_wait(&s_stdout);
+            stream_wait(&s_stderr);
+            process_wait(p);
+            poll_block();
+        }
+        stream_read(&s_stdout);
+        stream_read(&s_stderr);
+
+        if (stdout_log) {
+            *stdout_log = ds_steal_cstr(&s_stdout.log);
+        }
+        if (stderr_log) {
+            *stderr_log = ds_steal_cstr(&s_stderr.log);
+        }
+
+        stream_close(&s_stdout);
+        stream_close(&s_stderr);
+
+        *status = process_status(p);
+        process_destroy(p);
+        return 0;
+    } else {
+        /* Running in child process. */
+        int max_fds;
+        int i;
+
+        fatal_signal_fork();
+        unblock_sigchld(&oldsigs);
+
+        dup2(get_null_fd(), 0);
+        dup2(s_stdout.fds[1], 1);
+        dup2(s_stderr.fds[1], 2);
+
+        max_fds = get_max_fds();
+        for (i = 3; i < max_fds; i++) {
+            close(i);
+        }
+
+        execvp(argv[0], argv);
+        fprintf(stderr, "execvp(\"%s\") failed: %s\n",
+                argv[0], strerror(errno));
+        exit(EXIT_FAILURE);
+    }
+}
+
 static void
 sigchld_handler(int signr OVS_UNUSED)
 {
+    struct process *p;
+
+    COVERAGE_INC(process_sigchld);
+    LIST_FOR_EACH (p, node, &all_processes) {
+        if (!p->exited) {
+            int retval, status;
+            do {
+                retval = waitpid(p->pid, &status, WNOHANG);
+            } while (retval == -1 && errno == EINTR);
+            if (retval == p->pid) {
+                p->exited = true;
+                p->status = status;
+            } else if (retval < 0) {
+                /* XXX We want to log something but we're in a signal
+                 * handler. */
+                p->exited = true;
+                p->status = -1;
+            }
+        }
+    }
     ignore(write(fds[1], "", 1));
+}
+
+static bool
+is_member(int x, const int *array, size_t n)
+{
+    size_t i;
+
+    for (i = 0; i < n; i++) {
+        if (array[i] == x) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool
+sigchld_is_blocked(void)
+{
+    sigset_t sigs;
+
+    xsigprocmask(SIG_SETMASK, NULL, &sigs);
+    return sigismember(&sigs, SIGCHLD);
+}
+
+static void
+block_sigchld(sigset_t *oldsigs)
+{
+    sigset_t sigchld;
+
+    sigemptyset(&sigchld);
+    sigaddset(&sigchld, SIGCHLD);
+    xsigprocmask(SIG_BLOCK, &sigchld, oldsigs);
+}
+
+static void
+unblock_sigchld(const sigset_t *oldsigs)
+{
+    xsigprocmask(SIG_SETMASK, oldsigs, NULL);
 }
