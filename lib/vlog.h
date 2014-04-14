@@ -244,7 +244,7 @@ void vlog_usage(void);
         struct vlog_module VLM_##MODULE =                               \
         {                                                               \
             #MODULE,                                        /* name */  \
-            { [ 0 ... VLF_N_FACILITIES - 1] = VLL_INFO }, /* levels */  \
+            { [  VLF_N_FACILITIES - 1] = VLL_INFO },      /* levels */  \
             VLL_INFO,                                  /* min_level */  \
             true                               /* honor_rate_limits */  \
         };
