@@ -22,30 +22,30 @@ typedef struct icmp6_hdr {
         uint16_t  icmp6_un_data16[2]; /* type-specific field */
         uint8_t   icmp6_un_data8[4];  /* type-specific field */
     } icmp6_dataun;
-}ICMP6HDR;
-
+}icmp6_hdr;
+/*
 typedef struct ip6_ext {
     u_int8_t ip6e_nxt;
     u_int8_t ip6e_len;
-}IP6EXT;
+}ip6_ext;*/
 
 #define REQ_DATASIZE 32     // Echo Request Data size
 
 // ICMP Echo Request
 typedef struct tagECHOREQUEST
 {
-    ICMP6HDR icmp6Hdr;
+	icmp6_hdr icmp6Hdr;
     DWORD   dwTime;
     char    cData[REQ_DATASIZE];
-}ECHOREQUEST, *PECHOREQUEST;
+}tagECHOREQUEST, *PtagECHOREQUEST;
 
 
 // ICMP Echo Reply
 typedef struct tagECHOREPLY
 {
-    ECHOREQUEST echoRequest;
+	tagECHOREQUEST echoRequest;
     char    cFiller[256];
-}ECHOREPLY, *PECHOREPLY;
+}tagECHOREPLY, *PtagECHOREPLY;
 END_PACKED_STRUCT
 
 #if     BYTE_ORDER == BIG_ENDIAN
@@ -70,20 +70,21 @@ END_PACKED_STRUCT
 #define ND_OPT_MTU                      5
 #define ND_OPT_RTR_ADV_INTERVAL         7
 #define ND_OPT_HOME_AGENT_INFO          8
-struct nd_opt_hdr             /* Neighbor discovery option header */
+typedef struct nd_opt_hdr             /* Neighbor discovery option header */
 {
     uint8_t  nd_opt_type;
     uint8_t  nd_opt_len;        /* in units of 8 octets */
     /* followed by option specific data */
-};
+}nd_opt_hdr;
 /* Routing header */
-struct ip6_rthdr
+/*
+typedef struct ip6_rthdr
 {
     uint8_t  ip6r_nxt;          /* next header */
-    uint8_t  ip6r_len;          /* length in units of 8 octets */
-    uint8_t  ip6r_type;         /* routing type */
-    uint8_t  ip6r_segleft;      /* segments left */
+  //  uint8_t  ip6r_len;          /* length in units of 8 octets */
+   // uint8_t  ip6r_type;         /* routing type */
+   // uint8_t  ip6r_segleft;      /* segments left */
     /* followed by routing type specific data */
-};
+//}ip6_rthdr;
 
 #endif

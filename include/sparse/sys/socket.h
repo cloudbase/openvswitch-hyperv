@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012, 2013 Nicira, Inc.
+ * Copyright (c) 2011, 2012 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,7 +23,6 @@
 
 #include "openvswitch/types.h"
 #include <sys/uio.h>
-#include <stddef.h>
 
 typedef unsigned short int sa_family_t;
 typedef __socklen_t socklen_t;
@@ -87,7 +86,6 @@ enum {
 };
 
 enum {
-    SOL_PACKET,
     SOL_SOCKET
 };
 
@@ -108,8 +106,7 @@ enum {
     SO_SNDLOWAT,
     SO_SNDTIMEO,
     SO_TYPE,
-    SO_RCVBUFFORCE,
-    SO_ATTACH_FILTER
+    SO_RCVBUFFORCE
 };
 
 enum {
