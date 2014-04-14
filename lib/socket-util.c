@@ -1210,7 +1210,11 @@ send_iovec_and_fds_fully(int sock,
         } else if (!*bytes_sent) {
             retval = send_iovec_and_fds(sock, iovs, n_iovs, fds, n_fds);
         } else {
-            retval = writev(sock, iovs, n_iovs);
+#ifdef _WIN32
+			WSASend(sock, (LPWSABUF)iovs, n_iovs, &retval, 0, NULL, NULL);
+#else
+			retval = writev(sock, iovs, n_iovs);
+#endif
         }
 
         if (retval > 0) {
