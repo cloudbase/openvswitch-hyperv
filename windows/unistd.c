@@ -64,3 +64,8 @@ char* strsep(char** stringp, const char* delim)
 
 	return start;
 }
+
+pid_t fork(void)
+{
+return 0;
+}
