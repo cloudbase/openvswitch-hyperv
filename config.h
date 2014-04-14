@@ -198,6 +198,7 @@
 #pragma warning( disable : 4244 ) //possible loss of data
 #pragma warning( disable : 4146 ) //unary minus operator applied to unsigned type, result still unsigned
 #pragma warning( disable : 4018 ) //'>=' : signed/unsigned mismatch
+#include <WinSock2.h>
 #define ffs __lzcnt
 #define inline __inline
 #define strtok_r strtok_s
