@@ -22,7 +22,6 @@ set ( sources_openvswitch
 aes128.c
 backtrace.c
 bitmap.c
-bond.c
 bundle.c
 byteq.c
 cfm.c
