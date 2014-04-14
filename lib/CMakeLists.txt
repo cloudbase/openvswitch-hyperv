@@ -17,29 +17,109 @@ set(CMAKE_C_ARCHIVE_CREATE "<CMAKE_AR> cru <LINK_FLAGS> <TARGET> <OBJECTS>")
 set(CMAKE_C_ARCHIVE_FINISH "<CMAKE_RANLIB> <TARGET>")
 ENDIF(${CMAKE_SYSTEM_NAME} MATCHES "Linux")
 
-set ( sources_openvswitch aes128.c autopath.c backtrace.c bitmap.c bond.c 
-bundle.c byteq.c
-cfm.c classifier.c command-line.c coverage.c csum.c 
-daemon.c ${OVS_Port_SOURCE_DIR}/generated/dhparams.c 
-${OVS_Port_SOURCE_DIR}/generated/dirs.c dpif-linux.c  dpif-netdev.c dpif.c 
-dummy.c dynamic-string.c
-entropy.c fatal-signal.c flow.c hash.c heap.c hmap.c hmapx.c 
-json.c jsonrpc.c lacp.c leak-checker.c learning-switch.c 
-learn.c list.c lockfile.c 
-mac-learning.c match.c memory.c meta-flow.c multipath.c 
-netdev-dummy.c netdev-linux.c netdev.c netdev-vport.c netlink-notifier.c 
-netlink.c netlink-socket.c nx-match.c
-odp-util.c ofp-actions.c ofpbuf.c ofp-errors.c ofp-msgs.c ofp-parse.c 
-ofp-print.c ofp-util.c ovsdb-data.c ovsdb-error.c ovsdb-idl.c ovsdb-parser.c
+set ( sources_openvswitch 
+aes128.c
+backtrace.c
+bitmap.c
+bond.c
+bundle.c
+byteq.c
+cfm.c
+classifier.c
+command-line.c
+coverage.c
+csum.c
+daemon.c
+dirs.c 
+dpif-linux.c
+dpif-netdev.c
+dpif.c
+dummy.c
+dynamic-string.c
+entropy.c
+fatal-signal.c
+flow.c
+hash.c
+heap.c
+hmap.c
+hmapx.c
+jhash.c
+json.c
+jsonrpc.c
+lacp.c
+leak-checker.c
+learn.c
+learning-switch.c
+list.c
+lockfile.c
+mac-learning.c
+match.c
+memory.c
+meta-flow.c
+multipath.c
+netdev-dummy.c
+netdev-linux.c
+netdev-vport.c
+netdev.c
+netlink-notifier.c
+netlink-socket.c
+netlink.c
+nx-match.c
+odp-util.c
+ofp-actions.c
+ofp-errors.c
+ofp-msgs.c
+ofp-parse.c
+ofp-print.c
+ofp-util.c
+ofp-version-opt.c
+ofpbuf.c
+ovsdb-data.c
+ovsdb-error.c
+ovsdb-idl.c
+ovsdb-parser.c
 ovsdb-types.c
-packets.c pcap.c poll-loop.c process.c 
-random.c rconn.c reconnect.c route-table.c rtnetlink-link.c 
-sha1.c shash.c signals.c simap.c smap.c socket-util.c sort.c sset.c stp.c
-stream-fd.c stream.c stream-ssl.c stream-tcp.c stream-unix.c stress.c string.c
-svec.c 
-table.c tag.c timer.c timeval.c token-bucket.c 
-unicode.c unixctl.c util.c uuid.c 
-vconn.c vconn-stream.c vlan-bitmap.c vlandev.c vlog.c vswitch-idl.c
+packets.c
+pcap-file.c
+poll-loop.c
+process.c
+random.c
+rconn.c
+reconnect.c
+route-table.c
+rtnetlink-link.c
+sha1.c
+shash.c
+signals.c
+simap.c
+smap.c
+socket-util.c
+sort.c
+sset.c
+stp.c
+stream-fd.c
+stream-nossl.c
+stream-tcp.c
+stream-unix.c
+stream.c
+stress.c
+string.c
+svec.c
+table.c
+tag.c
+timer.c
+timeval.c
+token-bucket.c
+unicode.c
+unixctl.c
+util.c
+uuid.c
+vconn-stream.c
+vconn.c
+vlan-bitmap.c
+vlandev.c
+vlog.c
+vswitch-idl.c
 worker.c )
 
 list(SORT sources_openvswitch)
