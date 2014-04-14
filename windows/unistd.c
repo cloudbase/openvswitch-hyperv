@@ -1,4 +1,5 @@
 #include <unistd.h>
+#include <tlhelp32.h>
 
 #define SIGINT_MASK    1 
 #define SIGILL_MASK    2 
