@@ -513,7 +513,9 @@ daemonize_start(void)
         }
 
         /* Running in daemon or monitor process. */
-        setsid();
+#ifndef _WIN32
+		setsid();
+#endif
     }
 
     if (monitor) {
