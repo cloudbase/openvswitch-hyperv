@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include <io.h>
+#include <sys/uio.h>
 #include <getopt.h>
 #include <process.h>
 #include <dirent.h>
