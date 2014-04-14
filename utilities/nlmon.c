@@ -140,9 +140,11 @@ main(int argc OVS_UNUSED, char *argv[])
             if (attrs[IFLA_MASTER]) {
                 uint32_t idx = nl_attr_get_u32(attrs[IFLA_MASTER]);
                 char ifname[IFNAMSIZ];
-                if (!if_indextoname(idx, ifname)) {
-                    strcpy(ifname, "unknown");
-                }
+#ifndef _WIN32
+				if (!if_indextoname(idx, ifname)) {
+					strcpy(ifname, "unknown");
+				}
+#endif
                 printf("\tmaster=%"PRIu32" (%s)\n", idx, ifname);
             }
         }
