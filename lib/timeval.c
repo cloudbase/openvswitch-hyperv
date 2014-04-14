@@ -199,24 +199,26 @@ time_enable_restart(void)
 static void
 set_up_timer(void)
 {
-    static timer_t timer_id;    /* "static" to avoid apparent memory leak. */
-    struct itimerspec itimer;
+#ifndef _WIN32
+	static timer_t timer_id;    /* "static" to avoid apparent memory leak. */
+	struct itimerspec itimer;
 
-    if (!CACHE_TIME) {
-        return;
-    }
+	if (!CACHE_TIME) {
+		return;
+	}
 
-    if (timer_create(monotonic_clock, NULL, &timer_id)) {
-        VLOG_FATAL("timer_create failed (%s)", strerror(errno));
-    }
+	if (timer_create(monotonic_clock, NULL, &timer_id)) {
+		VLOG_FATAL("timer_create failed (%s)", strerror(errno));
+	}
 
-    itimer.it_interval.tv_sec = 0;
-    itimer.it_interval.tv_nsec = TIME_UPDATE_INTERVAL * 1000 * 1000;
-    itimer.it_value = itimer.it_interval;
+	itimer.it_interval.tv_sec = 0;
+	itimer.it_interval.tv_nsec = TIME_UPDATE_INTERVAL * 1000 * 1000;
+	itimer.it_value = itimer.it_interval;
 
-    if (timer_settime(timer_id, 0, &itimer, NULL)) {
-        VLOG_FATAL("timer_settime failed (%s)", strerror(errno));
-    }
+	if (timer_settime(timer_id, 0, &itimer, NULL)) {
+		VLOG_FATAL("timer_settime failed (%s)", strerror(errno));
+	}
+#endif
 }
 
 /* Set up the interval timer, to ensure that time advances even without calling
