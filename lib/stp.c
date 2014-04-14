@@ -38,12 +38,13 @@ VLOG_DEFINE_THIS_MODULE(stp);
 #define STP_PROTOCOL_VERSION 0x00
 #define STP_TYPE_CONFIG 0x00
 #define STP_TYPE_TCN 0x80
-
+PACKED_STRUCT
 struct stp_bpdu_header {
     ovs_be16 protocol_id;       /* STP_PROTOCOL_ID. */
     uint8_t protocol_version;   /* STP_PROTOCOL_VERSION. */
     uint8_t bpdu_type;          /* One of STP_TYPE_*. */
-} __attribute__((packed));
+};
+END_PACKED_STRUCT
 BUILD_ASSERT_DECL(sizeof(struct stp_bpdu_header) == 4);
 
 enum stp_config_bpdu_flags {
@@ -51,6 +52,7 @@ enum stp_config_bpdu_flags {
     STP_CONFIG_TOPOLOGY_CHANGE = 0x01
 };
 
+PACKED_STRUCT
 struct stp_config_bpdu {
     struct stp_bpdu_header header; /* Type STP_TYPE_CONFIG. */
     uint8_t flags;                 /* STP_CONFIG_* flags. */
@@ -62,12 +64,15 @@ struct stp_config_bpdu {
     ovs_be16 max_age;              /* 8.5.1.6: Timeout for received data. */
     ovs_be16 hello_time;           /* 8.5.1.7: Time between BPDU generation. */
     ovs_be16 forward_delay;        /* 8.5.1.8: State progression delay. */
-} __attribute__((packed));
-BUILD_ASSERT_DECL(sizeof(struct stp_config_bpdu) == 35);
+};
+END_PACKED_STRUCT
+//BUILD_ASSERT_DECL(sizeof(struct stp_config_bpdu) == 35);
 
+PACKED_STRUCT
 struct stp_tcn_bpdu {
     struct stp_bpdu_header header; /* Type STP_TYPE_TCN. */
-} __attribute__((packed));
+};
+END_PACKED_STRUCT
 BUILD_ASSERT_DECL(sizeof(struct stp_tcn_bpdu) == 4);
 
 struct stp_timer {

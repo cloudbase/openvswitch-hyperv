@@ -19,6 +19,10 @@
 
 #include <stdbool.h>
 #include <sys/types.h>
+#ifdef _WIN32
+#include <config.h>
+#include <unistd.h>
+#endif
 
 struct process;
 void process_init(void);

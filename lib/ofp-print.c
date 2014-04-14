@@ -547,7 +547,11 @@ ofp_print_switch_config(struct ds *string, const struct ofp_switch_config *osc)
 
 static void print_wild(struct ds *string, const char *leader, int is_wild,
             int verbosity, const char *format, ...)
-            __attribute__((format(printf, 5, 6)));
+#ifndef _WIN32
+			__attribute__((format(printf, 5, 6)));
+#else
+			;
+#endif
 
 static void print_wild(struct ds *string, const char *leader, int is_wild,
                        int verbosity, const char *format, ...)
