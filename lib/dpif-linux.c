@@ -46,9 +46,7 @@
 #include "netlink.h"
 #include "odp-util.h"
 #include "ofpbuf.h"
-#ifndef _WIN32
 #include "openvswitch/datapath-compat.h"
-#endif
 #include "packets.h"
 #include "poll-loop.h"
 #include "random.h"

@@ -11,6 +11,7 @@
 #include <dirent.h>
 #include <direct.h>
 #include <linux/rtnetlink.h>
+#include <sys/resource.h>
 #include <config.h>
 
 #define srandom srand
