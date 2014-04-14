@@ -75,20 +75,30 @@ main(int argc OVS_UNUSED, char *argv[])
             static const struct iff_flag flags[] = {
                 { IFF_UP, "UP", },
                 { IFF_BROADCAST, "BROADCAST", },
-                { IFF_DEBUG, "DEBUG", },
-                { IFF_LOOPBACK, "LOOPBACK", },
-                { IFF_POINTOPOINT, "POINTOPOINT", },
-                { IFF_NOTRAILERS, "NOTRAILERS", },
-                { IFF_RUNNING, "RUNNING", },
-                { IFF_NOARP, "NOARP", },
-                { IFF_PROMISC, "PROMISC", },
-                { IFF_ALLMULTI, "ALLMULTI", },
-                { IFF_MASTER, "MASTER", },
-                { IFF_SLAVE, "SLAVE", },
-                { IFF_MULTICAST, "MULTICAST", },
-                { IFF_PORTSEL, "PORTSEL", },
-                { IFF_AUTOMEDIA, "AUTOMEDIA", },
-                { IFF_DYNAMIC, "DYNAMIC", },
+#ifndef _WIN32
+				{ IFF_DEBUG, "DEBUG", },
+#endif
+				{ IFF_LOOPBACK, "LOOPBACK", },
+#ifndef _WIN32
+				{ IFF_POINTOPOINT, "POINTOPOINT", },
+				{ IFF_NOTRAILERS, "NOTRAILERS", },
+#endif
+				{ IFF_RUNNING, "RUNNING", },
+#ifndef _WIN32
+				{ IFF_NOARP, "NOARP", },
+#endif
+				{ IFF_PROMISC, "PROMISC", },
+#ifndef _WIN32
+				{ IFF_ALLMULTI, "ALLMULTI", },
+				{ IFF_MASTER, "MASTER", },
+				{ IFF_SLAVE, "SLAVE", },
+#endif
+				{ IFF_MULTICAST, "MULTICAST", },
+#ifndef _WIN32
+				{ IFF_PORTSEL, "PORTSEL", },
+				{ IFF_AUTOMEDIA, "AUTOMEDIA", },
+				{ IFF_DYNAMIC, "DYNAMIC", },
+#endif
             };
 
             struct nlattr *attrs[ARRAY_SIZE(rtnlgrp_link_policy)];
@@ -112,9 +122,13 @@ main(int argc OVS_UNUSED, char *argv[])
             printf("netdev %s changed (%s):\n",
                    nl_attr_get_string(attrs[IFLA_IFNAME]),
                    (nlh->nlmsg_type == RTM_NEWLINK ? "RTM_NEWLINK"
-                    : nlh->nlmsg_type == RTM_DELLINK ? "RTM_DELLINK"
-                    : nlh->nlmsg_type == RTM_GETLINK ? "RTM_GETLINK"
-                    : nlh->nlmsg_type == RTM_SETLINK ? "RTM_SETLINK"
+#ifndef _WIN32
+				   : nlh->nlmsg_type == RTM_DELLINK ? "RTM_DELLINK"
+#endif
+				   : nlh->nlmsg_type == RTM_GETLINK ? "RTM_GETLINK"
+#ifndef _WIN32
+				   : nlh->nlmsg_type == RTM_SETLINK ? "RTM_SETLINK"
+#endif
                     : "other"));
             printf("\tflags:");
             for (i = 0; i < ARRAY_SIZE(flags); i++) {
