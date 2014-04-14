@@ -101,3 +101,191 @@ pid_t fork(void)
 {
 return 0;
 }
+
+// The sigaddset call adds the individual signal specified to the signal set pointed to by set. 
+int sigaddset(sigset_t *set, int signo)
+{
+    switch (signo)
+    {
+    case SIGINT:
+        *set |= SIGINT_MASK;
+        break;
+    case SIGILL:
+        *set |= SIGILL_MASK;
+        break;
+    case SIGFPE:
+        *set |= SIGFPE_MASK;
+        break;
+    case SIGSEGV:
+        *set |= SIGSEGV_MASK;
+        break;
+    case SIGTERM:
+        *set |= SIGTERM_MASK;
+        break;
+    case SIGBREAK:
+        *set |= SIGBREAK_MASK;
+        break;
+    case SIGABRT:
+    case SIGABRT_COMPAT:
+        *set |= SIGABRT_MASK;
+        break;
+    }
+
+    return 0;
+}
+
+// The sigdelset call removes the individual signal specified from the signal set pointed to by set. 
+int sigdelset(sigset_t *set, int signo)
+{
+    switch (signo)
+    {
+    case SIGINT:
+        *set &= ~(DWORD)SIGINT_MASK;
+        break;
+    case SIGILL:
+        *set &= ~(DWORD)SIGILL_MASK;
+        break;
+    case SIGFPE:
+        *set &= ~(DWORD)SIGFPE_MASK;
+        break;
+    case SIGSEGV:
+        *set &= ~(DWORD)SIGSEGV_MASK;
+        break;
+    case SIGTERM:
+        *set &= ~(DWORD)SIGTERM_MASK;
+        break;
+    case SIGBREAK:
+        *set &= ~(DWORD)SIGBREAK_MASK;
+        break;
+    case SIGABRT:
+    case SIGABRT_COMPAT:
+        *set &= ~(DWORD)SIGABRT_MASK;
+        break;
+    }
+
+    return 0;
+}
+
+
+// The sigemptyset call creates a new mask set and excludes all signals from it. 
+int sigemptyset(sigset_t *set)
+{
+    *set = 0;
+    return 0;
+}
+
+// The sigfillset call creates a new mask set and includes all signals in it. 
+int sigfillset(sigset_t *set)
+{
+    *set = 0xffffffff;
+    return 0;
+}
+
+// The sigismember call tests the signal mask set pointed to by set for the existence of the specified signal (signo). 
+int sigismember(const sigset_t *set, int signo)
+{
+    switch (signo)
+    {
+    case SIGINT:
+        return *set & SIGINT_MASK;
+    case SIGILL:
+        return *set & SIGILL_MASK;
+    case SIGFPE:
+        return *set & SIGFPE_MASK;
+    case SIGSEGV:
+        return *set & SIGSEGV_MASK;
+    case SIGTERM:
+        return *set & SIGTERM_MASK;
+    case SIGBREAK:
+        return *set & SIGBREAK_MASK;
+    case SIGABRT:
+    case SIGABRT_COMPAT:
+        return *set & SIGABRT_MASK;
+    }
+
+    return 0;
+}
+
+// The strsignal() function returns a string describing the signal number passed in the argument sig. 
+char *strsignal(int sig)
+{
+    switch (sig)
+    {
+    case SIGINT:
+        return "SIGINT";
+        break;
+    case SIGILL:
+        return "SIGILL";
+        break;
+    case SIGFPE:
+        return "SIGFPE";
+        break;
+    case SIGSEGV:
+        return "SIGSEGV";
+        break;
+    case SIGTERM:
+        return "SIGTERM";
+        break;
+    case SIGBREAK:
+        return "SIGBREAK";
+        break;
+    case SIGABRT:
+    case SIGABRT_COMPAT:
+        return "SIGABRT";
+        break;
+    }
+
+    return 0;
+}
+
+struct sigaction sigaction_table[NSIG] = { 0 };
+
+int
+sigaction(int signum, const struct sigaction *act, struct sigaction *oldact)
+{
+    switch (signum)
+    {
+    case SIGINT:
+    case SIGILL:
+    case SIGFPE:
+    case SIGSEGV:
+    case SIGTERM:
+    case SIGBREAK:
+    case SIGABRT:
+        /* signal is valid, do nothing */
+        break;
+    default:
+        /* signal is invalid */
+        errno = EINVAL;
+        return 0;
+    }
+
+    if (oldact)
+    {
+        /* save old action */
+        oldact->sa_handler = sigaction_table[signum].sa_handler;
+        oldact->sa_sigaction = sigaction_table[signum].sa_sigaction;
+        oldact->sa_mask = sigaction_table[signum].sa_mask;
+        oldact->sa_flags = sigaction_table[signum].sa_flags;
+        /*oldact->sa_restorer = sigaction_table[signum].sa_restorer;*/
+    }
+
+    if (act)
+    {
+        /* set new action */
+        sigaction_table[signum].sa_handler = act->sa_handler;
+        sigaction_table[signum].sa_sigaction = act->sa_sigaction;
+        sigaction_table[signum].sa_mask = act->sa_mask;
+        sigaction_table[signum].sa_flags = act->sa_flags;
+        /*sigaction_table[signum].sa_restorer = act->sa_restorer;*/
+
+        signal(signum, act->sa_handler);
+    }
+
+    return 0;
+}
+
+int sigprocmask(int signum, const struct sigaction *act, struct sigaction *oldact)
+{
+    return 0;
+}
