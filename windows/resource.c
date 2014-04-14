@@ -43,3 +43,134 @@ getrlimit(enum __rlimit_resource resource, struct rlimit *rlimits)
     _set_errno(ENOSYS);
     return 0;
 }
+
+int fcntl(int fd, int cmd, ...)
+{
+    va_list a;
+    va_start(a, cmd);
+    switch (cmd)
+    {
+    case F_SETLK:
+        {
+            struct flock *l = va_arg(a, struct flock*);
+            switch (l->l_type)
+            {
+            case F_RDLCK:
+                {
+                    OVERLAPPED o = { 0 };
+                    HANDLE h = (HANDLE)_get_osfhandle(fd);
+                    if (l->l_whence != SEEK_SET || l->l_start != 0 || l->l_len != 0)
+                    {
+                        _set_errno(ENOTSUP);
+                        return -1;
+                    }
+                    if (!LockFileEx(h, LOCKFILE_FAIL_IMMEDIATELY, 0, 0, 1, &o)) // read lock
+                    {
+                        unsigned long x = GetLastError();
+                        _set_errno(GetLastError() == ERROR_LOCK_VIOLATION ? EAGAIN : EBADF);
+                        return -1;
+                    }
+                    UnlockFile(h, 0, 0, 1, 1); // write lock
+                        }
+                break;
+            case F_WRLCK:
+                {
+                    OVERLAPPED o = { 0 };
+                    HANDLE h = (HANDLE)_get_osfhandle(fd);
+                    if (l->l_whence != SEEK_SET || l->l_start != 0 || l->l_len != 0)
+                    {
+                        _set_errno(ENOTSUP);
+                        return -1;
+                    }
+                    if (!LockFileEx(h, LOCKFILE_FAIL_IMMEDIATELY | LOCKFILE_EXCLUSIVE_LOCK, 0, 1, 1, &o)) // write lock
+                    {
+                        unsigned long x = GetLastError();
+                        _set_errno(GetLastError() == ERROR_LOCK_VIOLATION ? EDEADLK : EBADF);
+                        return -1;
+                    }
+                    UnlockFile(h, 0, 0, 0, 1); // read lock
+                        }
+                break;
+            case F_UNLCK:
+                {
+                    HANDLE h = (HANDLE)_get_osfhandle(fd);
+                    if (l->l_whence != SEEK_SET || l->l_start != 0 || l->l_len != 0)
+                    {
+                        _set_errno(ENOTSUP);
+                        return -1;
+                    }
+                    UnlockFile(h, 0, 0, 0, 1); // read lock
+                    UnlockFile(h, 0, 0, 1, 1); // write lock
+                        }
+                break;
+            default:
+                _set_errno(ENOTSUP);
+                return -1;
+            }
+                }
+        break;
+    case F_SETLKW:
+        {
+            struct flock *l = va_arg(a, struct flock*);
+            switch (l->l_type)
+            {
+            case F_RDLCK:
+                {
+                    OVERLAPPED o = { 0 };
+                    HANDLE h = (HANDLE)_get_osfhandle(fd);
+                    if (l->l_whence != SEEK_SET || l->l_start != 0 || l->l_len != 0)
+                    {
+                        _set_errno(ENOTSUP);
+                        return -1;
+                    }
+                    if (!LockFileEx(h, 0, 0, 0, 1, &o)) // read lock
+                    {
+                        unsigned long x = GetLastError();
+                        return -1;
+                    }
+                    UnlockFile(h, 0, 0, 1, 1); // write lock
+                        }
+                break;
+            case F_WRLCK:
+                {
+                    OVERLAPPED o = { 0 };
+                    HANDLE h = (HANDLE)_get_osfhandle(fd);
+                    if (l->l_whence != SEEK_SET || l->l_start != 0 || l->l_len != 0)
+                    {
+                        _set_errno(ENOTSUP);
+                        return -1;
+                    }
+                    if (!LockFileEx(h, LOCKFILE_EXCLUSIVE_LOCK, 0, 1, 1, &o)) // write lock
+                    {
+                        unsigned long x = GetLastError();
+                        return -1;
+                    }
+                    UnlockFile(h, 0, 0, 0, 1); // read lock
+                        }
+                break;
+            case F_UNLCK:
+                {
+                    struct flock *l = va_arg(a, struct flock*);
+                    HANDLE h = (HANDLE)_get_osfhandle(fd);
+                    if (l->l_whence != SEEK_SET || l->l_start != 0 || l->l_len != 0)
+                    {
+                        _set_errno(ENOTSUP);
+                        return -1;
+                    }
+                    UnlockFile(h, 0, 0, 0, 1); // read lock
+                    UnlockFile(h, 0, 0, 1, 1); // write lock
+                        }
+                break;
+            default:
+                _set_errno(ENOTSUP);
+                return -1;
+            }
+                 }
+        break;
+    default:
+        _set_errno(ENOTSUP);
+        return -1;
+    }
+
+    return 0;
+}
