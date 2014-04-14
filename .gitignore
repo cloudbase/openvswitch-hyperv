@@ -93,3 +93,12 @@ OVS_Port.sln
 tests/flows.txt
 tests/flows2.txt
 tests/flows3.txt
+*.sln
+*.suo
+*.sdf
+*.vcxproj*
+
+*Debug*
+*Release*
+!*Debug*.c
+!*Debug*.h
