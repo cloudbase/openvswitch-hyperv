@@ -35,13 +35,21 @@
 #include "jsonrpc.h"
 #include "jsonrpc-server.h"
 #include "list.h"
+#ifdef _WIN32
+#include "../lib/memory.h"
+#else
 #include "memory.h"
+#endif
 #include "ovsdb.h"
 #include "ovsdb-data.h"
 #include "ovsdb-types.h"
 #include "ovsdb-error.h"
 #include "poll-loop.h"
+#ifdef _WIN32
+#include "../lib/process.h"
+#else
 #include "process.h"
+#endif
 #include "row.h"
 #include "simap.h"
 #include "shash.h"
