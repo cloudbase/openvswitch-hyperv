@@ -1,5 +1,37 @@
 #include <unistd.h>
 
+long sysconf(int name)
+{
+    long val = -1;
+    long val2 = -1;
+    SYSTEM_INFO sysInfo;
+    MEMORYSTATUSEX status;
+
+    switch (name)
+    {
+    case _SC_NPROCESSORS_ONLN:
+        val = GetNumLogicalProcessors();
+        break;
+
+    case _SC_PAGESIZE:
+        GetSystemInfo(&sysInfo);
+        val = sysInfo.dwPageSize;
+        break;
+
+    case _SC_PHYS_PAGES:
+        status.dwLength = sizeof(status);
+        val2 = sysconf(_SC_PAGESIZE);
+        if (GlobalMemoryStatusEx(&status) && val2 != -1)
+            val = status.ullTotalPhys / val2;
+        break;
+    default:
+        break;
+    }
+
+    return val;
+}
+
+
 long pathconf(char* smth, int n)
     {
     return _MAX_PATH;
