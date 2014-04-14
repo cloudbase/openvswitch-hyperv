@@ -434,10 +434,12 @@ monitor_daemon(pid_t daemon_pid)
 
                     r.rlim_cur = 0;
                     r.rlim_max = 0;
-                    if (setrlimit(RLIMIT_CORE, &r) == -1) {
-                        VLOG_WARN("failed to disable core dumps: %s",
-                                  strerror(errno));
-                    }
+#ifndef _WIN32
+					if (setrlimit(RLIMIT_CORE, &r) == -1) {
+						VLOG_WARN("failed to disable core dumps: %s",
+							strerror(errno));
+					}
+#endif
                 }
 
                 /* Throttle restarts to no more than once every 10 seconds. */
