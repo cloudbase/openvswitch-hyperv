@@ -35,7 +35,9 @@
 #endif
 
 #include <sys/types.h>
+#ifndef _WIN32
 #include_next <linux/types.h>
+#endif
 #else  /* no <linux/types.h> */
 #include <stdint.h>
 
