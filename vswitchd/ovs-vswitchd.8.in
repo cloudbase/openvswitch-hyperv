@@ -7,6 +7,8 @@
 .TH ovs\-vswitchd 8 "@VERSION@" "Open vSwitch" "Open vSwitch Manual"
 .\" This program's name:
 .ds PN ovs\-vswitchd
+.\" SSL peer program's name:
+.ds SN ovs\-controller
 .
 .SH NAME
 ovs\-vswitchd \- Open vSwitch daemon
@@ -29,6 +31,9 @@ startup.  It sets up Open vSwitch datapaths and then operates
 switching across each bridge described in its configuration files.  As
 the database changes, \fBovs\-vswitchd\fR automatically updates its
 configuration to match.
+.PP
+Upon receipt of a SIGHUP signal, \fBovs\-vswitchd\fR reopens its log
+file, if one was specified on the command line.
 .PP
 \fBovs\-vswitchd\fR switches may be configured with any of the following
 features:
@@ -83,29 +88,17 @@ only allow privileged users, such as the superuser, to use it.
 \fBovs\-vswitchd\fR emits a log message if \fBmlockall()\fR is
 unavailable or unsuccessful.
 .
-.IP "\fB\-\-enable\-of14\fR"
-Specifying this option allows OpenFlow 1.4 to be used if it is enabled
-through the \fBprotocols\fR column in the \fBController\fR.  Without
-this option, \fBovs\-vswitchd\fR will not use OpenFlow 1.4 even if it
-is enabled that way.  This option is present because OpenFlow 1.4
-support is not safe: the daemon will abort when certain unimplemented
-features are tested.  Thus, for now it is suitable only for
-experimental use.  When the support is implemented safely, this option
-will be removed.
-.
-.SS "Daemon Options"
 .ds DD \
 \fBovs\-vswitchd\fR detaches only after it has connected to the \
 database, retrieved the initial configuration, and set up that \
 configuration.
 .so lib/daemon.man
-.SS "Service Options"
-.so lib/service.man
 .SS "Public Key Infrastructure Options"
 .so lib/ssl.man
 .so lib/ssl-bootstrap.man
 .so lib/vlog.man
 .so lib/common.man
+.so lib/leak-checker.man
 .
 .SH "RUNTIME MANAGEMENT COMMANDS"
 \fBovs\-appctl\fR(8) can send commands to a running
@@ -118,15 +111,6 @@ Causes \fBovs\-vswitchd\fR to gracefully terminate.
 .IP "\fBqos/show\fR \fIinterface\fR"
 Queries the kernel for Quality of Service configuration and statistics
 associated with the given \fIinterface\fR.
-.IP "\fBbfd/show\fR [\fIinterface\fR]"
-Displays detailed information about Bidirectional Forwarding Detection
-configured on \fIinterface\fR.  If \fIinterface\fR is not specified,
-then displays detailed information about all interfaces with BFD
-enabled.
-.IP "\fBbfd/set-forwarding\fR [\fIinterface\fR] \fIstatus\fR"
-Force the fault status of the BFD module on \fIinterface\fR (or all
-interfaces if none is given) to be \fIstatus\fR.  \fIstatus\fR can be
-"true", "false", or "normal" which reverts to the standard behavior.
 .IP "\fBcfm/show\fR [\fIinterface\fR]"
 Displays detailed information about Connectivity Fault Management
 configured on \fIinterface\fR.  If \fIinterface\fR is not specified,
@@ -225,26 +209,7 @@ enabled.
 .so lib/vlog-unixctl.man
 .so lib/memory-unixctl.man
 .so lib/coverage-unixctl.man
-.
-.SH "OPENFLOW IMPLEMENTATION"
-.
-.PP
-This section documents aspects of OpenFlow for which the OpenFlow
-specification requires documentation.
-.
-.SS "Packet buffering."
-The OpenFlow specification, version 1.2, says:
-.
-.IP
-Switches that implement buffering are expected to expose, through
-documentation, both the amount of available buffering, and the length
-of time before buffers may be reused.
-.
-.PP
-Open vSwitch maintains a separate set of 256 packet buffers for each
-OpenFlow connection.  Any given packet buffer is preserved until it is
-referenced by an \fBOFPT_FLOW_MOD\fR or \fBOFPT_PACKET_OUT\fR request
-or for 5 seconds, whichever comes first.
+.so lib/stress-unixctl.man
 .
 .SH "LIMITS"
 .
@@ -261,9 +226,7 @@ of a single bridge consumes 3 file descriptors and adding a port consumes
 to fixed hash table sizing.  Other platforms may have different limitations.
 .
 .IP \(bu
-2,048 MAC learning entries per bridge, by default.  (This is
-configurable via \fBother\-config:mac\-table\-size\fR in the
-\fBBridge\fR table.  See \fBovs\-vswitchd.conf.db\fR(5) for details.)
+2,048 MAC learning entries per bridge.
 .
 .IP \(bu
 Kernel flows are limited only by memory available to the kernel.

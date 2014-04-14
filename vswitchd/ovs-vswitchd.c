@@ -1,4 +1,4 @@
-/* Copyright (c) 2008, 2009, 2010, 2011, 2012, 2013, 2014 Nicira, Inc.
+/* Copyright (c) 2008, 2009, 2010, 2011, 2012 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,15 +32,18 @@
 #include "dirs.h"
 #include "dpif.h"
 #include "dummy.h"
-#include "fatal-signal.h"
+#include "leak-checker.h"
 #include "memory.h"
 #include "netdev.h"
 #include "openflow/openflow.h"
 #include "ovsdb-idl.h"
 #include "poll-loop.h"
+#include "process.h"
+#include "signals.h"
 #include "simap.h"
 #include "stream-ssl.h"
 #include "stream.h"
+#include "stress.h"
 #include "svec.h"
 #include "timeval.h"
 #include "unixctl.h"
@@ -48,7 +51,7 @@
 #include "vconn.h"
 #include "vlog.h"
 #include "lib/vswitch-idl.h"
-#include "lib/netdev-dpdk.h"
+#include "worker.h"
 
 VLOG_DEFINE_THIS_MODULE(vswitchd);
 
@@ -66,19 +69,18 @@ main(int argc, char *argv[])
 {
     char *unixctl_path = NULL;
     struct unixctl_server *unixctl;
+    struct signal *sighup;
     char *remote;
     bool exiting;
     int retval;
 
-    set_program_name(argv[0]);
-    retval = dpdk_init(argc,argv);
-    argc -= retval;
-    argv += retval;
-
     proctitle_init(argc, argv);
-    service_start(&argc, &argv);
+    set_program_name(argv[0]);
+    stress_init_command();
     remote = parse_options(argc, argv, &unixctl_path);
-    fatal_ignore_sigpipe();
+    signal(SIGPIPE, SIG_IGN);
+    sighup = signal_register(SIGHUP);
+    process_init();
     ovsrec_init();
 
     daemonize_start();
@@ -86,12 +88,14 @@ main(int argc, char *argv[])
     if (want_mlockall) {
 #ifdef HAVE_MLOCKALL
         if (mlockall(MCL_CURRENT | MCL_FUTURE)) {
-            VLOG_ERR("mlockall failed: %s", ovs_strerror(errno));
+            VLOG_ERR("mlockall failed: %s", strerror(errno));
         }
 #else
         VLOG_ERR("mlockall not supported on this system");
 #endif
     }
+
+    worker_start();
 
     retval = unixctl_server_create(unixctl_path, &unixctl);
     if (retval) {
@@ -104,6 +108,10 @@ main(int argc, char *argv[])
 
     exiting = false;
     while (!exiting) {
+        worker_run();
+        if (signal_poll(sighup)) {
+            vlog_reopen_log_file();
+        }
         memory_run();
         if (memory_should_report()) {
             struct simap usage;
@@ -113,10 +121,14 @@ main(int argc, char *argv[])
             memory_report(&usage);
             simap_destroy(&usage);
         }
+        bridge_run_fast();
         bridge_run();
+        bridge_run_fast();
         unixctl_server_run(unixctl);
         netdev_run();
 
+        worker_wait();
+        signal_wait(sighup);
         memory_wait();
         bridge_wait();
         unixctl_server_wait(unixctl);
@@ -125,13 +137,10 @@ main(int argc, char *argv[])
             poll_immediate_wake();
         }
         poll_block();
-        if (should_service_stop()) {
-            exiting = true;
-        }
     }
     bridge_exit();
     unixctl_server_destroy(unixctl);
-    service_stop();
+    signal_unregister(sighup);
 
     return 0;
 }
@@ -144,27 +153,25 @@ parse_options(int argc, char *argv[], char **unixctl_pathp)
         OPT_MLOCKALL,
         OPT_UNIXCTL,
         VLOG_OPTION_ENUMS,
+        LEAK_CHECKER_OPTION_ENUMS,
         OPT_BOOTSTRAP_CA_CERT,
         OPT_ENABLE_DUMMY,
         OPT_DISABLE_SYSTEM,
-        OPT_ENABLE_OF14,
-        DAEMON_OPTION_ENUMS,
-        OPT_DPDK,
+        DAEMON_OPTION_ENUMS
     };
-    static const struct option long_options[] = {
+    static struct option long_options[] = {
         {"help",        no_argument, NULL, 'h'},
         {"version",     no_argument, NULL, 'V'},
         {"mlockall",    no_argument, NULL, OPT_MLOCKALL},
         {"unixctl",     required_argument, NULL, OPT_UNIXCTL},
         DAEMON_LONG_OPTIONS,
         VLOG_LONG_OPTIONS,
+        LEAK_CHECKER_LONG_OPTIONS,
         STREAM_SSL_LONG_OPTIONS,
         {"peer-ca-cert", required_argument, NULL, OPT_PEER_CA_CERT},
         {"bootstrap-ca-cert", required_argument, NULL, OPT_BOOTSTRAP_CA_CERT},
         {"enable-dummy", optional_argument, NULL, OPT_ENABLE_DUMMY},
         {"disable-system", no_argument, NULL, OPT_DISABLE_SYSTEM},
-        {"enable-of14", no_argument, NULL, OPT_ENABLE_OF14},
-        {"dpdk", required_argument, NULL, OPT_DPDK},
         {NULL, 0, NULL, 0},
     };
     char *short_options = long_options_to_short_options(long_options);
@@ -195,6 +202,7 @@ parse_options(int argc, char *argv[], char **unixctl_pathp)
 
         VLOG_OPTION_HANDLERS
         DAEMON_OPTION_HANDLERS
+        LEAK_CHECKER_OPTION_HANDLERS
         STREAM_SSL_OPTION_HANDLERS
 
         case OPT_PEER_CA_CERT:
@@ -213,15 +221,8 @@ parse_options(int argc, char *argv[], char **unixctl_pathp)
             dp_blacklist_provider("system");
             break;
 
-        case OPT_ENABLE_OF14:
-            bridge_enable_of14();
-            break;
-
         case '?':
             exit(EXIT_FAILURE);
-
-        case OPT_DPDK:
-            break;
 
         default:
             abort();
@@ -258,9 +259,9 @@ usage(void)
     vlog_usage();
     printf("\nOther options:\n"
            "  --unixctl=SOCKET        override default control socket name\n"
-           "  --enable-of14           allow enabling OF1.4 (unsafely!)\n"
            "  -h, --help              display this help message\n"
            "  -V, --version           display version information\n");
+    leak_checker_usage();
     exit(EXIT_SUCCESS);
 }
 

@@ -1,4 +1,4 @@
-/* Copyright (c) 2010, 2012, 2013, 2014 Nicira, Inc.
+/* Copyright (c) 2010, 2012 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -35,32 +35,30 @@
 #include "dirs.h"
 #include "dynamic-string.h"
 #include "json.h"
-#include "latch.h"
 #include "ofpbuf.h"
-#include "ovs-thread.h"
 #include "poll-loop.h"
 #include "shash.h"
 #include "smap.h"
 #include "timeval.h"
 #include "vlog.h"
+#include "worker.h"
 
 VLOG_DEFINE_THIS_MODULE(system_stats);
 
 /* #ifdefs make it a pain to maintain code: you have to try to build both ways.
  * Thus, this file tries to compile as much of the code as possible regardless
- * of the target, by writing "if (LINUX)" instead of "#ifdef __linux__" where
- * this is possible. */
-#ifdef __linux__
-#define LINUX 1
+ * of the target, by writing "if (LINUX_DATAPATH)" instead of "#ifdef
+ * __linux__" where this is possible. */
+#ifdef LINUX_DATAPATH
 #include <asm/param.h>
 #else
-#define LINUX 0
+#define LINUX_DATAPATH 0
 #endif
 
 static void
 get_cpu_cores(struct smap *stats)
 {
-    long int n_cores = count_cpu_cores();
+    long int n_cores = sysconf(_SC_NPROCESSORS_ONLN);
     if (n_cores > 0) {
         smap_add_format(stats, "cpu", "%ld", n_cores);
     }
@@ -85,14 +83,7 @@ get_page_size(void)
     static unsigned int cached;
 
     if (!cached) {
-#ifndef _WIN32
         long int value = sysconf(_SC_PAGESIZE);
-#else
-        long int value;
-        SYSTEM_INFO sysinfo;
-        GetSystemInfo(&sysinfo);
-        value = sysinfo.dwPageSize;
-#endif
         if (value >= 0) {
             cached = value;
         }
@@ -104,7 +95,7 @@ get_page_size(void)
 static void
 get_memory_stats(struct smap *stats)
 {
-    if (!LINUX) {
+    if (!LINUX_DATAPATH) {
         unsigned int pagesize = get_page_size();
 #ifdef _SC_PHYS_PAGES
         long int phys_pages = sysconf(_SC_PHYS_PAGES);
@@ -118,20 +109,12 @@ get_memory_stats(struct smap *stats)
 #endif
         int mem_total, mem_used;
 
-#ifndef _WIN32
         if (pagesize <= 0 || phys_pages <= 0 || avphys_pages <= 0) {
             return;
         }
 
         mem_total = phys_pages * (pagesize / 1024);
         mem_used = (phys_pages - avphys_pages) * (pagesize / 1024);
-#else
-        MEMORYSTATUS memory_status;
-        GlobalMemoryStatus(&memory_status);
-
-        mem_total = memory_status.dwTotalPhys;
-        mem_used = memory_status.dwTotalPhys - memory_status.dwAvailPhys;
-#endif
         smap_add_format(stats, "memory", "%d,%d", mem_total, mem_used);
     } else {
         static const char file_name[] = "/proc/meminfo";
@@ -148,8 +131,7 @@ get_memory_stats(struct smap *stats)
 
         stream = fopen(file_name, "r");
         if (!stream) {
-            VLOG_WARN_ONCE("%s: open failed (%s)",
-                           file_name, ovs_strerror(errno));
+            VLOG_WARN_ONCE("%s: open failed (%s)", file_name, strerror(errno));
             return;
         }
 
@@ -164,7 +146,7 @@ get_memory_stats(struct smap *stats)
             char key[16];
             int value;
 
-            if (ovs_scan(line, "%15[^:]: %u", key, &value)) {
+            if (sscanf(line, "%15[^:]: %u", key, &value) == 2) {
                 int *valuep = shash_find_data(&dict, key);
                 if (valuep) {
                     *valuep = value;
@@ -190,7 +172,7 @@ get_boot_time(void)
     static long long int cache_expiration = LLONG_MIN;
     static long long int boot_time;
 
-    ovs_assert(LINUX);
+    ovs_assert(LINUX_DATAPATH);
 
     if (time_msec() >= cache_expiration) {
         static const char stat_file[] = "/proc/stat";
@@ -201,14 +183,13 @@ get_boot_time(void)
 
         stream = fopen(stat_file, "r");
         if (!stream) {
-            VLOG_ERR_ONCE("%s: open failed (%s)",
-                          stat_file, ovs_strerror(errno));
+            VLOG_ERR_ONCE("%s: open failed (%s)", stat_file, strerror(errno));
             return boot_time;
         }
 
         while (fgets(line, sizeof line, stream)) {
             long long int btime;
-            if (ovs_scan(line, "btime %lld", &btime)) {
+            if (sscanf(line, "btime %lld", &btime) == 1) {
                 boot_time = btime * 1000;
                 goto done;
             }
@@ -223,7 +204,7 @@ get_boot_time(void)
 static unsigned long long int
 ticks_to_ms(unsigned long long int ticks)
 {
-    ovs_assert(LINUX);
+    ovs_assert(LINUX_DATAPATH);
 
 #ifndef USER_HZ
 #define USER_HZ 100
@@ -256,13 +237,12 @@ get_raw_process_info(pid_t pid, struct raw_process_info *raw)
     FILE *stream;
     int n;
 
-    ovs_assert(LINUX);
+    ovs_assert(LINUX_DATAPATH);
 
     sprintf(file_name, "/proc/%lu/stat", (unsigned long int) pid);
     stream = fopen(file_name, "r");
     if (!stream) {
-        VLOG_ERR_ONCE("%s: open failed (%s)",
-                      file_name, ovs_strerror(errno));
+        VLOG_ERR_ONCE("%s: open failed (%s)", file_name, strerror(errno));
         return false;
     }
 
@@ -342,25 +322,25 @@ count_crashes(pid_t pid)
     int crashes = 0;
     FILE *stream;
 
-    ovs_assert(LINUX);
+    ovs_assert(LINUX_DATAPATH);
 
     sprintf(file_name, "/proc/%lu/cmdline", (unsigned long int) pid);
     stream = fopen(file_name, "r");
     if (!stream) {
-        VLOG_WARN_ONCE("%s: open failed (%s)", file_name, ovs_strerror(errno));
+        VLOG_WARN_ONCE("%s: open failed (%s)", file_name, strerror(errno));
         goto exit;
     }
 
     if (!fgets(line, sizeof line, stream)) {
         VLOG_WARN_ONCE("%s: read failed (%s)", file_name,
-                       feof(stream) ? "end of file" : ovs_strerror(errno));
+                       feof(stream) ? "end of file" : strerror(errno));
         goto exit_close;
     }
 
     paren = strchr(line, '(');
     if (paren) {
         int x;
-        if (ovs_scan(paren + 1, "%d", &x)) {
+        if (sscanf(paren + 1, "%d", &x) == 1) {
             crashes = x;
         }
     }
@@ -385,7 +365,7 @@ get_process_info(pid_t pid, struct process_info *pinfo)
 {
     struct raw_process_info child;
 
-    ovs_assert(LINUX);
+    ovs_assert(LINUX_DATAPATH);
     if (!get_raw_process_info(pid, &child)) {
         return false;
     }
@@ -413,14 +393,12 @@ get_process_info(pid_t pid, struct process_info *pinfo)
 static void
 get_process_stats(struct smap *stats)
 {
-#ifndef _WIN32
     struct dirent *de;
     DIR *dir;
 
     dir = opendir(ovs_rundir());
     if (!dir) {
-        VLOG_ERR_ONCE("%s: open failed (%s)",
-                      ovs_rundir(), ovs_strerror(errno));
+        VLOG_ERR_ONCE("%s: open failed (%s)", ovs_rundir(), strerror(errno));
         return;
     }
 
@@ -452,7 +430,7 @@ get_process_stats(struct smap *stats)
         key = xasprintf("process_%.*s",
                         (int) (extension - de->d_name), de->d_name);
         if (!smap_get(stats, key)) {
-            if (LINUX && get_process_info(pid, &pinfo)) {
+            if (LINUX_DATAPATH && get_process_info(pid, &pinfo)) {
                 smap_add_format(stats, key, "%lu,%lu,%lld,%d,%lld,%lld",
                                 pinfo.vsz, pinfo.rss, pinfo.cputime,
                                 pinfo.crashes, pinfo.booted, pinfo.uptime);
@@ -464,28 +442,25 @@ get_process_stats(struct smap *stats)
     }
 
     closedir(dir);
-#endif /* _WIN32 */
 }
 
 static void
 get_filesys_stats(struct smap *stats OVS_UNUSED)
 {
-#if HAVE_GETMNTENT_R && HAVE_STATVFS
+#if HAVE_SETMNTENT && HAVE_STATVFS
     static const char file_name[] = "/etc/mtab";
-    struct mntent mntent;
     struct mntent *me;
-    char buf[4096];
     FILE *stream;
     struct ds s;
 
     stream = setmntent(file_name, "r");
     if (!stream) {
-        VLOG_ERR_ONCE("%s: open failed (%s)", file_name, ovs_strerror(errno));
+        VLOG_ERR_ONCE("%s: open failed (%s)", file_name, strerror(errno));
         return;
     }
 
     ds_init(&s);
-    while ((me = getmntent_r(stream, &mntent, buf, sizeof buf)) != NULL) {
+    while ((me = getmntent(stream)) != NULL) {
         unsigned long long int total, free;
         struct statvfs vfs;
         char *p;
@@ -519,38 +494,51 @@ get_filesys_stats(struct smap *stats OVS_UNUSED)
         smap_add(stats, "file_systems", ds_cstr(&s));
     }
     ds_destroy(&s);
-#endif  /* HAVE_GETMNTENT_R && HAVE_STATVFS */
+#endif  /* HAVE_SETMNTENT && HAVE_STATVFS */
 }
 
 #define SYSTEM_STATS_INTERVAL (5 * 1000) /* In milliseconds. */
 
-static struct ovs_mutex mutex = OVS_MUTEX_INITIALIZER;
-static pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
-static struct latch latch OVS_GUARDED_BY(mutex);
+/* Whether the client wants us to report system stats. */
 static bool enabled;
-static bool started OVS_GUARDED_BY(mutex);
-static struct smap *system_stats OVS_GUARDED_BY(mutex);
 
-static void *system_stats_thread_func(void *);
-static void discard_stats(void);
+static enum {
+    S_DISABLED,                 /* Not enabled, nothing going on. */
+    S_WAITING,                  /* Sleeping for SYSTEM_STATS_INTERVAL ms. */
+    S_REQUEST_SENT,             /* Sent a request to worker. */
+    S_REPLY_RECEIVED            /* Received a reply from worker. */
+} state;
 
-/* Enables or disables system stats collection, according to 'enable'. */
+/* In S_WAITING state: the next time to wake up.
+ * In other states: not meaningful. */
+static long long int next_refresh;
+
+/* In S_REPLY_RECEIVED: the stats that have just been received.
+ * In other states: not meaningful. */
+static struct smap *received_stats;
+
+static worker_request_func system_stats_request_cb;
+static worker_reply_func system_stats_reply_cb;
+
+/* Enables or disables system stats collection, according to 'new_enable'.
+ *
+ * Even if system stats are disabled, the caller should still periodically call
+ * system_stats_run(). */
 void
-system_stats_enable(bool enable)
+system_stats_enable(bool new_enable)
 {
-    if (enabled != enable) {
-        ovs_mutex_lock(&mutex);
-        if (enable) {
-            if (!started) {
-                xpthread_create(NULL, NULL, system_stats_thread_func, NULL);
-                latch_init(&latch);
-                started = true;
+    if (new_enable != enabled) {
+        if (new_enable) {
+            if (state == S_DISABLED) {
+                state = S_WAITING;
+                next_refresh = time_msec();
             }
-            discard_stats();
-            xpthread_cond_signal(&cond);
+        } else {
+            if (state == S_WAITING) {
+                state = S_DISABLED;
+            }
         }
-        enabled = enable;
-        ovs_mutex_unlock(&mutex);
+        enabled = new_enable;
     }
 }
 
@@ -559,28 +547,41 @@ system_stats_enable(bool enable)
  *
  * When a new snapshot is available (which only occurs if system stats are
  * enabled), returns it as an smap owned by the caller.  The caller must use
- * both smap_destroy() and free() to completely free the returned data.
+ * both smap_destroy() and free() to complete free the returned data.
  *
  * When no new snapshot is available, returns NULL. */
 struct smap *
 system_stats_run(void)
 {
-    struct smap *stats = NULL;
+    switch (state) {
+    case S_DISABLED:
+        break;
 
-    ovs_mutex_lock(&mutex);
-    if (system_stats) {
-        latch_poll(&latch);
-
-        if (enabled) {
-            stats = system_stats;
-            system_stats = NULL;
-        } else {
-            discard_stats();
+    case S_WAITING:
+        if (time_msec() >= next_refresh) {
+            worker_request(NULL, 0, NULL, 0, system_stats_request_cb,
+                           system_stats_reply_cb, NULL);
+            state = S_REQUEST_SENT;
         }
-    }
-    ovs_mutex_unlock(&mutex);
+        break;
 
-    return stats;
+    case S_REQUEST_SENT:
+        break;
+
+    case S_REPLY_RECEIVED:
+        if (enabled) {
+            state = S_WAITING;
+            next_refresh = time_msec() + SYSTEM_STATS_INTERVAL;
+            return received_stats;
+        } else {
+            smap_destroy(received_stats);
+            free(received_stats);
+            state = S_DISABLED;
+        }
+        break;
+    }
+
+    return NULL;
 }
 
 /* Causes poll_block() to wake up when system_stats_run() needs to be
@@ -588,54 +589,62 @@ system_stats_run(void)
 void
 system_stats_wait(void)
 {
-    if (enabled) {
-        latch_wait(&latch);
+    switch (state) {
+    case S_DISABLED:
+        break;
+
+    case S_WAITING:
+        poll_timer_wait_until(next_refresh);
+        break;
+
+    case S_REQUEST_SENT:
+        /* Someone else should be calling worker_wait() to wake up when the
+         * reply arrives, otherwise there's a bug. */
+        break;
+
+    case S_REPLY_RECEIVED:
+        poll_immediate_wake();
+        break;
     }
 }
 
 static void
-discard_stats(void) OVS_REQUIRES(mutex)
+system_stats_request_cb(struct ofpbuf *request OVS_UNUSED,
+                        const int fds[] OVS_UNUSED, size_t n_fds OVS_UNUSED)
 {
-    if (system_stats) {
-        smap_destroy(system_stats);
-        free(system_stats);
-        system_stats = NULL;
-    }
+    struct smap stats;
+    struct json *json;
+    char *s;
+
+    smap_init(&stats);
+    get_cpu_cores(&stats);
+    get_load_average(&stats);
+    get_memory_stats(&stats);
+    get_process_stats(&stats);
+    get_filesys_stats(&stats);
+
+    json = smap_to_json(&stats);
+    s = json_to_string(json, 0);
+    worker_reply(s, strlen(s) + 1, NULL, 0);
+
+    free(s);
+    json_destroy(json);
+    smap_destroy(&stats);
 }
 
-static void * NO_RETURN
-system_stats_thread_func(void *arg OVS_UNUSED)
+static void
+system_stats_reply_cb(struct ofpbuf *reply,
+                      const int fds[] OVS_UNUSED, size_t n_fds OVS_UNUSED,
+                      void *aux OVS_UNUSED)
 {
-    pthread_detach(pthread_self());
+    struct json *json = json_from_string(reply->data);
 
-    for (;;) {
-        long long int next_refresh;
-        struct smap *stats;
+    received_stats = xmalloc(sizeof *received_stats);
+    smap_init(received_stats);
+    smap_from_json(received_stats, json);
 
-        ovs_mutex_lock(&mutex);
-        while (!enabled) {
-            ovs_mutex_cond_wait(&cond, &mutex);
-        }
-        ovs_mutex_unlock(&mutex);
+    ovs_assert(state == S_REQUEST_SENT);
+    state = S_REPLY_RECEIVED;
 
-        stats = xmalloc(sizeof *stats);
-        smap_init(stats);
-        get_cpu_cores(stats);
-        get_load_average(stats);
-        get_memory_stats(stats);
-        get_process_stats(stats);
-        get_filesys_stats(stats);
-
-        ovs_mutex_lock(&mutex);
-        discard_stats();
-        system_stats = stats;
-        latch_set(&latch);
-        ovs_mutex_unlock(&mutex);
-
-        next_refresh = time_msec() + SYSTEM_STATS_INTERVAL;
-        do {
-            poll_timer_wait_until(next_refresh);
-            poll_block();
-        } while (time_msec() < next_refresh);
-    }
+    json_destroy(json);
 }
