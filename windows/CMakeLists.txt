@@ -1,0 +1,20 @@
+IF(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
+include_directories("${OVS_Port_SOURCE_DIR}")
+include_directories("${OVS_Port_SOURCE_DIR}/include")
+include_directories("${OVS_Port_SOURCE_DIR}/lib")
+include_directories("${OVS_Port_SOURCE_DIR}/ofproto")
+include_directories("${OVS_Port_SOURCE_DIR}/ovsdb")
+include_directories("${OVS_Port_SOURCE_DIR}/utilities")
+include_directories("${OVS_Port_SOURCE_DIR}/tests")
+link_directories("${OVS_Port_SOURCE_DIR}")
+link_directories("${OVS_Port_SOURCE_DIR}/include")
+link_directories("${OVS_Port_SOURCE_DIR}/lib")
+link_directories("${OVS_Port_SOURCE_DIR}/ovsdb")
+link_directories("${OVS_Port_SOURCE_DIR}/utilities")
+link_directories("${OVS_Port_SOURCE_DIR}/tests")
+
+set(sources_windows getopt.c unistd.c resource.c poll.c wait.c time.c uio.c)
+add_library (win_api ${sources_windows})
+
+ENDIF(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
+
