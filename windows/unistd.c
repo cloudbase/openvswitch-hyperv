@@ -1,5 +1,10 @@
 #include <unistd.h>
 
+long pathconf(char* smth, int n)
+    {
+    return _MAX_PATH;
+    }
+
 char* strsep(char** stringp, const char* delim)
 {
 	char* start = *stringp;
