@@ -106,6 +106,33 @@ char* strsep(char** stringp, const char* delim)
 	return start;
 }
 
+
+int getppid()
+{
+    HANDLE hProcess, thProcess;
+    PROCESSENTRY32 ProcessEntry;
+
+    thProcess = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (thProcess == INVALID_HANDLE_VALUE) {
+        _set_errno(ENOSYS);
+        return -1;
+    }
+    ProcessEntry.dwSize = sizeof(PROCESSENTRY32);
+    ProcessEntry.th32ParentProcessID = 0;
+    if (!Process32First(thProcess, &ProcessEntry)) {
+        _set_errno(ENOSYS);
+        return -1;
+    }
+    CloseHandle(thProcess);
+    hProcess = OpenProcess(PROCESS_QUERY_INFORMATION, FALSE, ProcessEntry.th32ProcessID);
+    if (hProcess == NULL) {
+        _set_errno(ENOSYS);
+        return -1;
+    }
+    CloseHandle(hProcess);
+    return ProcessEntry.th32ParentProcessID;
+}
+
 pid_t fork(void)
 {
 return 0;
