@@ -1,5 +1,13 @@
 #include <unistd.h>
 
+int GetNumLogicalProcessors(void)
+{
+    SYSTEM_INFO info_temp;
+    GetSystemInfo(&info_temp);
+    long int n_cores = info_temp.dwNumberOfProcessors;
+    return n_cores;
+}
+
 long sysconf(int name)
 {
     long val = -1;
