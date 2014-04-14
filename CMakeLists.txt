@@ -18,7 +18,7 @@ include_directories("${OVS_Port_SOURCE_DIR}/tests")
 IF(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
 include_directories("${OVS_Port_SOURCE_DIR}/windows")
 LINK_LIBRARIES(${OVS_Port_SOURCE_DIR}/windows/thirdparty/libeay32.lib)
-LINK_LIBRARIES(${OVS_Port_SOURCE_DIR}/windows/thirdparty/win-pthread/x86/pthreadVC2.lib)
+LINK_LIBRARIES(${OVS_Port_SOURCE_DIR}/windows/thirdparty/win-pthread/lib/x86/pthreadVC2.lib)
 LINK_LIBRARIES(${OVS_Port_SOURCE_DIR}/windows/thirdparty/ssleay32.lib)
 ENDIF(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
 
