@@ -49,7 +49,7 @@
 #define HAVE_MNTENT_H 1
 
 /* Define to 1 if Netlink protocol is available. */
-#define HAVE_NETLINK 1
+#define HAVE_NETLINK 0
 
 /* Define to 1 if OpenSSL is installed. */
 /* #undef HAVE_OPENSSL */
