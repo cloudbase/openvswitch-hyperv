@@ -14,10 +14,19 @@ IF(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
 include_directories("${OVS_Port_SOURCE_DIR}/windows")
 ENDIF(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
 
-set (sources_ofproto  collectors.c connmgr.c
+set (sources_ofproto  
+collectors.c
+connmgr.c
 fail-open.c
 in-band.c
-names.c netflow.c
-ofproto-dpif-governor.c ofproto-dpif.c ofproto-dpif-sflow.c ofproto.c
-pinsched.c pktbuf.c)
+names.c
+netflow.c
+ofproto.c
+ofproto-dpif.c
+ofproto-dpif-governor.c
+ofproto-dpif-ipfix.c
+ofproto-dpif-sflow.c
+pktbuf.c
+pinsched.c
+tunnel.c )
 add_library (ofproto ${sources_ofproto})
