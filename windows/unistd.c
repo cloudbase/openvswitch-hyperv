@@ -1,4 +1,36 @@
 #include <unistd.h>
+int kill(pid_t pid, int sig)
+{
+    int res = 0;
+    HANDLE hProcess = OpenProcess(PROCESS_TERMINATE, FALSE, pid);
+
+    if (hProcess == NULL) {
+        _set_errno(ENOSYS);
+        return -1;
+    }
+    switch (sig) {
+    case SIGABRT:
+    case SIGKILL:
+        if (!TerminateProcess(hProcess, -1)) {
+            _set_errno(ENOSYS);
+            res = -1;
+        }
+        break;
+    case 0:
+        break;
+    case SIGHUP:
+    case SIGINT:
+    case SIGQUIT:
+    case SIGALRM:
+    case SIGTERM:
+    default:
+        _set_errno(EINVAL);
+        res = -1;
+        break;
+    }
+    CloseHandle(hProcess);
+    return res;
+}
 
 int GetNumLogicalProcessors(void)
 {
