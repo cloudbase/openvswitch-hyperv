@@ -46,6 +46,14 @@
 #include "netlink-socket.h"
 #endif
 
+#ifdef _WIN32
+#include <sys/wait.h>
+#include <mswsock.h>
+#include <windef.h>
+#pragma comment (lib, "Mswsock.lib")
+#pragma comment (lib, "Ws2_32.lib")
+#endif
+
 VLOG_DEFINE_THIS_MODULE(socket_util);
 
 /* #ifdefs make it a pain to maintain code: you have to try to build both ways.
@@ -930,9 +938,15 @@ getsockopt_int(int fd, int level, int option, const char *optname, int *valuep)
     return error;
 }
 
+#if defined(_WIN32)
 static void
 describe_sockaddr(struct ds *string, int fd,
-                  int (*getaddr)(int, struct sockaddr *, socklen_t *))
+int(WINAPI *getaddr)(int, struct sockaddr *, socklen_t *))
+#else
+static void
+describe_sockaddr(struct ds *string, int fd,
+int(*getaddr)(int, struct sockaddr *, socklen_t *))
+#endif
 {
     struct sockaddr_storage ss;
     socklen_t len = sizeof ss;
@@ -1014,7 +1028,9 @@ describe_sockaddr(struct ds *string, int fd,
     }
 }
 
-
+#ifdef _WIN32
+#undef LINUX_DATAPATH
+#endif
 #ifdef LINUX_DATAPATH
 static void
 put_fd_filename(struct ds *string, int fd)
@@ -1118,7 +1134,11 @@ send_iovec_and_fds(int sock,
         cmsg.cm.cmsg_len = CMSG_LEN(n_fds * sizeof *fds);
         cmsg.cm.cmsg_level = SOL_SOCKET;
         cmsg.cm.cmsg_type = SCM_RIGHTS;
-        memcpy(CMSG_DATA(&cmsg.cm), fds, n_fds * sizeof *fds);
+#ifdef _WIN32
+		memcpy(WSA_CMSG_DATA(&cmsg.cm), fds, n_fds * sizeof *fds);
+#else
+		memcpy(CMSG_DATA(&cmsg.cm), fds, n_fds * sizeof *fds);
+#endif
 
         msg.msg_name = NULL;
         msg.msg_namelen = 0;
@@ -1269,7 +1289,28 @@ recv_data_and_fds(int sock,
         msg.msg_controllen = sizeof cmsg.control;
         msg.msg_flags = 0;
 
-        retval = recvmsg(sock, &msg, 0);
+#ifdef _WIN32
+		WSAOVERLAPPED RecvOverlapped;
+		int ret = -1;
+		GUID WSARecvMsg_GUID = WSAID_WSARECVMSG;
+		LPFN_WSARECVMSG WSARecvMsg;
+		DWORD NumberOfBytes;
+		int nResult;
+		nResult = WSAIoctl(sock, SIO_GET_EXTENSION_FUNCTION_POINTER,
+			&WSARecvMsg_GUID, sizeof WSARecvMsg_GUID,
+			&WSARecvMsg, sizeof WSARecvMsg,
+			&NumberOfBytes, NULL, NULL);
+		int bla = WSAGetLastError();
+		int rc = WSARecvMsg(sock, msg.msg_iov, &retval, &RecvOverlapped, NULL);
+		bla = WSAGetLastError();
+		if (retval < 0)
+		{
+			retval = -1;
+			//erno = EAGAIN;
+		}
+#else
+		retval = recvmsg(sock, &msg, 0);
+#endif
     } while (retval < 0 && errno == EINTR);
     if (retval <= 0) {
         return retval < 0 ? -errno : 0;
@@ -1285,7 +1326,11 @@ recv_data_and_fds(int sock,
             goto error;
         } else {
             size_t n_fds = (p->cmsg_len - CMSG_LEN(0)) / sizeof *fds;
-            const int *fds_data = (const int *) CMSG_DATA(p);
+#ifdef _WIN32
+			const int *fds_data = (const int *)WSA_CMSG_DATA(p);
+#else
+			const int *fds_data = (const int *)CMSG_DATA(p);
+#endif
 
             ovs_assert(n_fds > 0);
             if (n_fds > SOUTIL_MAX_FDS) {
