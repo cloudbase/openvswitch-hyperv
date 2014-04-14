@@ -22,10 +22,12 @@
  * On other platforms, this header file implements just enough of
  * <linux/if_ether.h> to allow <linux/openvswitch.h> to work. */
 
+#ifndef _WIN32
 #if defined(HAVE_LINUX_IF_ETHER_H) || defined(__KERNEL__)
 #include_next <linux/if_ether.h>
 #else  /* no <linux/if_ether.h> */
 #define ETH_ALEN        6               /* Octets in one ethernet addr   */
+#endif
 #endif
 
 #endif /* <linux/if_ether.h> */
