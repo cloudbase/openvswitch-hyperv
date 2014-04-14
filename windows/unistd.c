@@ -1,4 +1,13 @@
 #include <unistd.h>
+
+#define SIGINT_MASK    1 
+#define SIGILL_MASK    2 
+#define SIGFPE_MASK    4 
+#define SIGSEGV_MASK   8 
+#define SIGTERM_MASK  16 
+#define SIGBREAK_MASK 32 
+#define SIGABRT_MASK  64 
+
 int kill(pid_t pid, int sig)
 {
     int res = 0;
