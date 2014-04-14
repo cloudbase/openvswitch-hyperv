@@ -89,3 +89,7 @@ _debian
 *.dir
 *Release*
 *CMakeFiles*
+OVS_Port.sln
+tests/flows.txt
+tests/flows2.txt
+tests/flows3.txt
