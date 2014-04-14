@@ -189,6 +189,10 @@ put_32aligned_u64(ovs_32aligned_u64 *x, uint64_t value)
     x->lo = value;
 }
 
+#ifdef _WIN32
+#undef __CHECKER__
+#endif
+
 #ifndef __CHECKER__
 /* Returns the value of 'x'. */
 static inline ovs_be64
