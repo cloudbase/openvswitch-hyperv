@@ -15,6 +15,9 @@
  */
 
 #include <config.h>
+#ifdef _WIN32
+#include <unistd.h>
+#endif
 #include <errno.h>
 #include <fcntl.h>
 #include <getopt.h>
@@ -44,8 +47,13 @@ VLOG_DEFINE_THIS_MODULE(ovsdb_tool);
 
 /* -m, --more: Verbosity level for "show-log" command output. */
 static int show_log_verbosity;
+#ifdef _WIN32
+#define NUMBER 13
+#else
+#define NUMBER
+#endif
 
-static const struct command all_commands[];
+static const struct command all_commands[NUMBER];
 
 static void usage(void) NO_RETURN;
 static void parse_options(int argc, char *argv[]);
