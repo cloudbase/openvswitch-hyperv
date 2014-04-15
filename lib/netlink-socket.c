@@ -112,16 +112,26 @@ nl_sock_create(int protocol, struct nl_sock **sockp)
     *sockp = NULL;
     sock = xmalloc(sizeof *sock);
 
-    sock->fd = socket(AF_NETLINK, SOCK_RAW, protocol);
+#ifdef _WIN32
+	HANDLE hConn = CreateFileA("\\\\.\\OpenVSwitchDevice", GENERIC_READ | GENERIC_WRITE,
+		FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING,
+		FILE_ATTRIBUTE_NORMAL, NULL);
+	sock->fd = hConn;
+#else
+	sock->fd = socket(AF_NETLINK, SOCK_RAW, protocol);
+#endif
+#ifndef _WIN32
     if (sock->fd < 0) {
         VLOG_ERR("fcntl: %s", strerror(errno));
         goto error;
     }
+#endif
     sock->protocol = protocol;
     sock->dump = NULL;
     sock->next_seq = 1;
 
     rcvbuf = 1024 * 1024;
+#ifndef _WIN32
     if (setsockopt(sock->fd, SOL_SOCKET, SO_RCVBUFFORCE,
                    &rcvbuf, sizeof rcvbuf)) {
         /* Only root can use SO_RCVBUFFORCE.  Everyone else gets EPERM.
@@ -137,18 +147,25 @@ nl_sock_create(int protocol, struct nl_sock **sockp)
         retval = -retval;
         goto error;
     }
-    sock->rcvbuf = retval;
+#else
+	sock->rcvbuf = rcvbuf;
+#endif //_WIN32
 
     /* Connect to kernel (pid 0) as remote address. */
+#ifndef _WIN32
     memset(&remote, 0, sizeof remote);
     remote.nl_family = AF_NETLINK;
     remote.nl_pid = 0;
     if (connect(sock->fd, (struct sockaddr *) &remote, sizeof remote) < 0) {
+#else
+	if (sock->fd == INVALID_HANDLE_VALUE) {
+#endif
         VLOG_ERR("connect(0): %s", strerror(errno));
         goto error;
     }
 
     /* Obtain pid assigned by kernel. */
+#ifndef _WIN32
     local_size = sizeof local;
     if (getsockname(sock->fd, (struct sockaddr *) &local, &local_size) < 0) {
         VLOG_ERR("getsockname: %s", strerror(errno));
@@ -160,6 +177,11 @@ nl_sock_create(int protocol, struct nl_sock **sockp)
         goto error;
     }
     sock->pid = local.nl_pid;
+#else
+	sock->pid = local.nl_pid;
+	//sock->pid = portid_next();
+	//set_sock_pid_in_kernel(sock->fd, sock->pid);
+#endif
 
     *sockp = sock;
     return 0;
@@ -172,7 +194,15 @@ error:
         }
     }
     if (sock->fd >= 0) {
-        close(sock->fd);
+#ifndef _WIN32
+		close(sock->fd);
+#else
+#if __USE_REMOTE_IO_NL_DEVICE
+		_win_close_handle((HANDLE)sock->fd);
+#else
+		CloseHandle((HANDLE)sock->fd);
+#endif
+#endif
     }
     free(sock);
     return retval;
@@ -195,7 +225,15 @@ nl_sock_destroy(struct nl_sock *sock)
         if (sock->dump) {
             sock->dump = NULL;
         } else {
-            close(sock->fd);
+#ifndef _WIN32
+			close(sock->fd);
+#else
+#if __USE_REMOTE_IO_NL_DEVICE
+			_win_close_handle((HANDLE)sock->fd);
+#else
+			CloseHandle((HANDLE)sock->fd);
+#endif
+#endif
             free(sock);
         }
     }
@@ -215,6 +253,7 @@ nl_sock_destroy(struct nl_sock *sock)
 int
 nl_sock_join_mcgroup(struct nl_sock *sock, unsigned int multicast_group)
 {
+#ifndef _WIN32
     int error = nl_sock_cow__(sock);
     if (error) {
         return error;
@@ -225,6 +264,43 @@ nl_sock_join_mcgroup(struct nl_sock *sock, unsigned int multicast_group)
                   multicast_group, strerror(errno));
         return errno;
     }
+#else
+	#if _WIN32
+	typedef struct _ovs_message_multicast {
+		struct nlmsghdr;
+
+		//if true, join; if else, leave
+		unsigned char join;
+		unsigned int groupId;
+	}ovs_message_multicast;
+
+	ovs_message_multicast msg = { 0 };
+
+	/*
+	uint32_t nlmsg_len;
+	uint16_t nlmsg_type;
+	uint16_t nlmsg_flags;
+	uint32_t nlmsg_seq;
+	uint32_t nlmsg_pid;
+	*/
+
+	msg.nlmsg_len = sizeof(ovs_message_multicast);
+	msg.nlmsg_type = 33;
+	msg.nlmsg_flags = 0;
+	msg.nlmsg_seq = 0;
+	msg.nlmsg_pid = sock->pid;
+
+	msg.join = 1;
+	msg.groupId = multicast_group;
+
+#if __USE_REMOTE_IO_NL_DEVICE
+	_win_write_file((HANDLE)sock->fd, &msg, sizeof(ovs_message_multicast), NULL);
+#else
+	WriteFile((HANDLE)sock->fd, &msg, sizeof(ovs_message_multicast), NULL, NULL);
+#endif
+#endif
+
+#endif
     return 0;
 }
 
@@ -241,6 +317,20 @@ nl_sock_join_mcgroup(struct nl_sock *sock, unsigned int multicast_group)
 int
 nl_sock_leave_mcgroup(struct nl_sock *sock, unsigned int multicast_group)
 {
+#ifdef _WIN32
+	typedef struct _ovs_message_multicast {
+		struct nlmsghdr;
+
+		//if true, join; if else, leave
+		unsigned char join;
+	}ovs_message_multicast;
+
+	ovs_message_multicast msg = { 0 };
+	nl_msg_put_nlmsghdr(&msg, sizeof(ovs_message_multicast), multicast_group, 0);
+	msg.join = 0;
+
+	nl_sock_transact(sock, &msg, NULL);
+#else
     ovs_assert(!sock->dump);
     if (setsockopt(sock->fd, SOL_NETLINK, NETLINK_DROP_MEMBERSHIP,
                    &multicast_group, sizeof multicast_group) < 0) {
@@ -248,6 +338,7 @@ nl_sock_leave_mcgroup(struct nl_sock *sock, unsigned int multicast_group)
                   multicast_group, strerror(errno));
         return errno;
     }
+#endif
     return 0;
 }
 
@@ -263,7 +354,24 @@ nl_sock_send__(struct nl_sock *sock, const struct ofpbuf *msg,
     nlmsg->nlmsg_pid = sock->pid;
     do {
         int retval;
-        retval = send(sock->fd, msg->data, msg->size, wait ? 0 : MSG_DONTWAIT);
+#ifdef _WIN32
+		WSAOVERLAPPED RecvOverlapped;
+		SecureZeroMemory((PVOID)& RecvOverlapped, sizeof (WSAOVERLAPPED));
+		RecvOverlapped.hEvent = WSACreateEvent();
+		if (RecvOverlapped.hEvent == NULL) {
+			LPOVERLAPPED
+				retval = -1;
+		}
+#if __USE_REMOTE_IO_NL_DEVICE
+		retval = _win_write_file((HANDLE)sock->fd, msg->data, msg->size, NULL);
+#else
+		retval = WriteFile((HANDLE)sock->fd, msg->data, msg->size, NULL, NULL);
+#endif
+
+#else
+		retval = send(sock->fd, msg->data, msg->size, wait ? 0 : MSG_DONTWAIT);
+#endif
+
         error = retval < 0 ? errno : 0;
     } while (error == EINTR);
     log_nlmsg(__func__, error, msg->data, msg->size, sock->protocol);
@@ -364,8 +472,6 @@ nl_sock_recv__(struct nl_sock *sock, struct ofpbuf *buf, bool wait)
 	if (bla != ERROR_IO_PENDING && !retval)
 		retval = -1;
 } while (bla == ERROR_IO_PENDING);
-
-printf("~~~~~~~~~~~~ sunt in netlink_recv retval = %d\n", retval);
 #else
     do {
         retval = recvmsg(sock->fd, &msg, wait ? 0 : MSG_DONTWAIT);
