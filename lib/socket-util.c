@@ -498,7 +498,11 @@ error:
     if (bind_path) {
         fatal_signal_unlink_file_now(bind_path);
     }
-    close(fd);
+#ifndef _WIN32
+	close(fd);
+#else
+	closesocket(fd);
+#endif
     return -error;
 }
 
@@ -624,6 +628,14 @@ inet_open_active(int style, const char *target, uint16_t default_port,
 
     /* Connect. */
     error = connect(fd, (struct sockaddr *) &sin, sizeof sin) == 0 ? 0 : errno;
+#ifdef _WIN32
+	int bla = WSAGetLastError();
+	if (bla == WSAEWOULDBLOCK)
+		error = EAGAIN;
+	if (error == EINPROGRESS) {
+		error = EAGAIN;
+	}
+#endif
     if (error == EINPROGRESS) {
         error = EAGAIN;
     }
@@ -634,7 +646,11 @@ exit:
             *sinp = sin;
         }
     } else if (fd >= 0) {
-        close(fd);
+#ifndef _WIN32
+		close(fd);
+#else
+		closesocket(fd);
+#endif
         fd = -1;
     }
     *fdp = fd;
@@ -792,7 +808,11 @@ inet_open_passive(int style, const char *target, int default_port,
     return fd;
 
 error:
-    close(fd);
+#ifndef _WIN32
+	close(fd);
+#else
+	closesocket(fd);
+#endif
     return -error;
 }
 

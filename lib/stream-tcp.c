@@ -54,7 +54,11 @@ new_tcp_stream(const char *name, int fd, int connect_status,
     retval = setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &on, sizeof on);
     if (retval) {
         VLOG_ERR("%s: setsockopt(TCP_NODELAY): %s", name, strerror(errno));
-        close(fd);
+#ifndef _WIN32
+		close(fd);
+#else
+		closesocket(fd);
+#endif
         return errno;
     }
 

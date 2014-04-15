@@ -84,8 +84,13 @@ punix_open(const char *name OVS_UNUSED, char *suffix,
     char *bind_path;
     int fd, error;
 
+#ifndef _WIN32
     bind_path = abs_file_name(ovs_rundir(), suffix);
     fd = make_unix_socket(SOCK_STREAM, true, bind_path, NULL);
+#else
+	fd = make_unix_socket(SOCK_STREAM, true, suffix, NULL);
+#endif
+
     if (fd < 0) {
         VLOG_ERR("%s: binding failed: %s", bind_path, strerror(errno));
         free(bind_path);

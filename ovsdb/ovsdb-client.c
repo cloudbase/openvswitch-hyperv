@@ -68,8 +68,13 @@ static bool timestamp;
 
 /* Format for table output. */
 static struct table_style table_style = TABLE_STYLE_DEFAULT;
+#ifdef _WIN32
+#define NUMBER 10
+#else
+#define NUMBER
+#endif
 
-static const struct ovsdb_client_command all_commands[];
+static const struct ovsdb_client_command all_commands[NUMBER];
 
 static void usage(void) NO_RETURN;
 static void parse_options(int argc, char *argv[]);
@@ -79,6 +84,22 @@ static void fetch_dbs(struct jsonrpc *, struct svec *dbs);
 int
 main(int argc, char *argv[])
 {
+#ifdef _WIN32
+	WORD wVersionRequested;
+	WSADATA wsaData;
+	int err;
+
+	/* Use the MAKEWORD(lowbyte, highbyte) macro declared in Windef.h */
+	wVersionRequested = MAKEWORD(2, 2);
+
+	err = WSAStartup(wVersionRequested, &wsaData);
+	if (err != 0) {
+		/* Tell the user that we could not find a usable */
+		/* Winsock DLL.                                  */
+		printf("WSAStartup failed with error: %d\n", err);
+		return 1;
+	}
+#endif
     const struct ovsdb_client_command *command;
     const char *database;
     struct jsonrpc *rpc;
@@ -108,7 +129,11 @@ main(int argc, char *argv[])
                 && strchr(argv[optind], ':'))) {
             rpc = open_jsonrpc(argv[optind++]);
         } else {
-            char *sock = xasprintf("unix:%s/db.sock", ovs_rundir());
+#ifndef _WIN32
+			char *sock = xasprintf("unix:%s/db.sock", ovs_rundir());
+#else
+			char *sock = xasprintf("tcp:127.0.0.1:5559", ovs_rundir());
+#endif
             rpc = open_jsonrpc(sock);
             free(sock);
         }
