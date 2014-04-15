@@ -20,6 +20,7 @@ ENDIF(${CMAKE_SYSTEM_NAME} MATCHES "Linux")
 
 set ( sources_openvswitch 
 aes128.c
+bond.c
 backtrace.c
 bitmap.c
 bundle.c
