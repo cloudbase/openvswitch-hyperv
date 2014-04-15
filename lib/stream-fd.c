@@ -79,7 +79,11 @@ static void
 fd_close(struct stream *stream)
 {
     struct stream_fd *s = stream_fd_cast(stream);
-    close(s->fd);
+#ifndef _WIN32
+	close(s->fd);
+#else
+	closesocket(s->fd);
+#endif
     free(s);
 }
 
@@ -104,7 +108,43 @@ fd_recv(struct stream *stream, void *buffer, size_t n)
         return -EIO;
     }
 
-    retval = read(s->fd, buffer, n);
+#ifndef _WIN32
+	retval = read(s->fd, buffer, n);
+#else
+	retval = recv(s->fd, buffer, n, 0);
+	int flag = 0;
+	if (retval == SOCKET_ERROR) {
+		int last_error = WSAGetLastError();
+		int sel = 1;
+		fd_set temp;
+		FD_ZERO(&temp);
+		FD_SET(s->fd, &temp);
+
+		struct timeval t;
+		t.tv_usec = 5000;
+		t.tv_sec = 0;
+		sel = 1;
+		int bla3 = WSAGetLastError();
+		if (sel == SOCKET_ERROR)
+			sel = 0;
+		int flag = 0;
+		while ((last_error == WSAEWOULDBLOCK) && sel)
+		{
+			Sleep(50);
+			retval = recv(s->fd, buffer, n, 0);
+			FD_ZERO(&temp);
+			FD_SET(s->fd, &temp);
+			last_error = WSAGetLastError();
+			sel = select(0, &temp, NULL, NULL, &t);
+			int bla2 = WSAGetLastError();
+			if (sel == SOCKET_ERROR)
+				sel = 0;
+			flag++;
+		}
+		if (last_error == WSAEWOULDBLOCK)
+			return -EAGAIN;
+	}
+#endif
     return retval >= 0 ? retval : -errno;
 }
 
@@ -122,7 +162,42 @@ fd_send(struct stream *stream, const void *buffer, size_t n)
         return -EIO;
     }
 
-    retval = write(s->fd, buffer, n);
+#ifndef _WIN32
+	retval = write(s->fd, buffer, n);
+#else
+	retval = send(s->fd, buffer, n, 0);
+	if (retval == SOCKET_ERROR) {
+		int last_error = WSAGetLastError();
+		int sel = 1;
+		fd_set temp;
+		FD_ZERO(&temp);
+		FD_SET(s->fd, &temp);
+
+		struct timeval t;
+		t.tv_usec = 5000;
+		t.tv_sec = 0;
+		sel = 1;
+		int bla3 = WSAGetLastError();
+		if (sel == SOCKET_ERROR)
+			sel = 0;
+		int flag = 0;
+		while ((last_error == WSAEWOULDBLOCK) && sel)
+		{
+			Sleep(50);
+			retval = send(s->fd, buffer, n, 0);
+			FD_ZERO(&temp);
+			FD_SET(s->fd, &temp);
+			last_error = WSAGetLastError();
+			sel = select(0, NULL, &temp, NULL, &t);
+			int bla2 = WSAGetLastError();
+			if (sel == SOCKET_ERROR)
+				sel = 0;
+			flag++;
+		}
+		if (last_error == WSAEWOULDBLOCK)
+			return -EAGAIN;
+	}
+#endif
     return (retval > 0 ? retval
             : retval == 0 ? -EAGAIN
             : -errno);
@@ -216,7 +291,11 @@ static void
 pfd_close(struct pstream *pstream)
 {
     struct fd_pstream *ps = fd_pstream_cast(pstream);
-    close(ps->fd);
+#ifndef _WIN32
+	close(ps->fd);
+#else
+	closesocket(ps->fd);
+#endif
     maybe_unlink_and_free(ps->unlink_path);
     free(ps);
 }
@@ -233,6 +312,11 @@ pfd_accept(struct pstream *pstream, struct stream **new_streamp)
     new_fd = accept(ps->fd, (struct sockaddr *) &ss, &ss_len);
     if (new_fd < 0) {
         retval = errno;
+#ifdef _WIN32
+		int last_error = WSAGetLastError();
+		if (last_error == WSAEWOULDBLOCK)
+			retval = EAGAIN;
+#endif
         if (retval != EAGAIN) {
             VLOG_DBG_RL(&rl, "accept: %s", strerror(retval));
         }
@@ -241,7 +325,11 @@ pfd_accept(struct pstream *pstream, struct stream **new_streamp)
 
     retval = set_nonblocking(new_fd);
     if (retval) {
-        close(new_fd);
+#ifndef _WIN32
+		close(new_fd);
+#else
+		closesocket(new_fd);
+#endif
         return retval;
     }
 
