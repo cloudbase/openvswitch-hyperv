@@ -25,7 +25,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <sys/fcntl.h>
+#include <sys/fnctl.h>
 #include <sys/stat.h>
 #include <sys/time.h>
 
@@ -97,8 +97,13 @@ struct sort_criterion {
 };
 static struct sort_criterion *criteria;
 static size_t n_criteria, allocated_criteria;
+#ifdef _WIN32
+#define NUMBER 40
+#else
+#define NUMBER
+#endif
 
-static const struct command all_commands[];
+static const struct command all_commands[NUMBER];
 
 static void usage(void) NO_RETURN;
 static void parse_options(int argc, char *argv[]);
@@ -110,6 +115,23 @@ static bool recv_flow_stats_reply(struct vconn *, ovs_be32 send_xid,
 int
 main(int argc, char *argv[])
 {
+#ifdef _WIN32
+	WORD wVersionRequested;
+	WSADATA wsaData;
+	int err;
+
+	/* Use the MAKEWORD(lowbyte, highbyte) macro declared in Windef.h */
+	wVersionRequested = MAKEWORD(2, 2);
+
+	err = WSAStartup(wVersionRequested, &wsaData);
+	if (err != 0) {
+		/* Tell the user that we could not find a usable */
+		/* Winsock DLL.                                  */
+		printf("WSAStartup failed with error: %d\n", err);
+		return 1;
+	}
+#endif
+
     set_program_name(argv[0]);
     parse_options(argc, argv);
     signal(SIGPIPE, SIG_IGN);
