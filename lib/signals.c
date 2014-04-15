@@ -124,7 +124,9 @@ signal_wait(struct signal *s)
     if (signaled[s->signr]) {
         poll_immediate_wake();
     } else {
-        poll_fd_wait(fds[0], POLLIN);
+#ifndef _WIN32
+		poll_fd_wait(fds[0], POLLIN);
+#endif
     }
 }
 
