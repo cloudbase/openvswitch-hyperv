@@ -294,7 +294,11 @@ ovsdb_log_read(struct ovsdb_log *file, struct json **jsonp)
     }
 
     file->prev_offset = file->offset;
-    file->offset = data_offset + data_length;
+#ifdef _WIN32
+	file->offset = data_offset + data_length + 2;
+#else
+	file->offset = data_offset + data_length;
+#endif
     *jsonp = json;
     return NULL;
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009, 2010, 2011, 2012, 2013, 2014 Nicira, Inc.
+ * Copyright (c) 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,7 +31,6 @@
 #include "compiler.h"
 #include "dirs.h"
 #include "dynamic-string.h"
-#include "fatal-signal.h"
 #include "hash.h"
 #include "json.h"
 #include "ovsdb-data.h"
@@ -129,7 +128,7 @@ static bool retry;
 static struct table_style table_style = TABLE_STYLE_DEFAULT;
 
 /* All supported commands. */
-static const struct vsctl_command_syntax *get_all_commands(void);
+static const struct vsctl_command_syntax all_commands[];
 
 /* The IDL we're using and the current transaction, if any.
  * This is for use by vsctl_exit() only, to allow it to clean up.
@@ -165,34 +164,6 @@ static bool is_condition_satisfied(const struct vsctl_table_class *,
                                    const char *arg,
                                    struct ovsdb_symbol_table *);
 
-/* Post_db_reload_check frame work is to allow ovs-vsctl to do additional
- * checks after OVSDB transactions are successfully recorded and reload by
- * ovs-vswitchd.
- *
- * For example, When a new interface is added to OVSDB, ovs-vswitchd will
- * either store a positive values on successful implementing the new
- * interface, or -1 on failure.
- *
- * Unless -no-wait command line option is specified,
- * post_db_reload_do_checks() is called right after any configuration
- * changes is picked up (i.e. reload) by ovs-vswitchd. Any error detected
- * post OVSDB reload is reported as ovs-vsctl errors. OVS-vswitchd logs
- * more detailed messages about those errors.
- *
- * Current implementation only check for Post OVSDB reload failures on new
- * interface additions with 'add-br' and 'add-port' commands.
- *
- * post_db_reload_expect_iface()
- *
- * keep track of interfaces to be checked post OVSDB reload. */
-static void post_db_reload_check_init(void);
-static void post_db_reload_do_checks(const struct vsctl_context *);
-static void post_db_reload_expect_iface(const struct ovsrec_interface *);
-
-static struct uuid *neoteric_ifaces;
-static size_t n_neoteric_ifaces;
-static size_t allocated_neoteric_ifaces;
-
 int
 main(int argc, char *argv[])
 {
@@ -205,7 +176,7 @@ main(int argc, char *argv[])
     char *args;
 
     set_program_name(argv[0]);
-    fatal_ignore_sigpipe();
+    signal(SIGPIPE, SIG_IGN);
     vlog_set_levels(NULL, VLF_CONSOLE, VLL_WARN);
     vlog_set_levels(&VLM_reconnect, VLF_ANY_FACILITY, VLL_WARN);
     ovsrec_init();
@@ -331,7 +302,7 @@ parse_options(int argc, char *argv[], struct shash *local_options)
     options = xmemdup(global_long_options, sizeof global_long_options);
     allocated_options = ARRAY_SIZE(global_long_options);
     n_options = n_global_long_options;
-    for (p = get_all_commands(); p->name; p++) {
+    for (p = all_commands; p->name; p++) {
         if (p->options[0]) {
             char *save_ptr = NULL;
             char *name;
@@ -420,7 +391,6 @@ parse_options(int argc, char *argv[], struct shash *local_options)
 
         case 'V':
             ovs_print_version(0, 0);
-            printf("DB Schema %s\n", ovsrec_get_db_version());
             exit(EXIT_SUCCESS);
 
         case 't':
@@ -598,7 +568,7 @@ find_command(const char *name)
     if (shash_is_empty(&commands)) {
         const struct vsctl_command_syntax *p;
 
-        for (p = get_all_commands(); p->name; p++) {
+        for (p = all_commands; p->name; p++) {
             shash_add_assert(&commands, p->name, p);
         }
     }
@@ -1032,7 +1002,6 @@ pre_get_info(struct vsctl_context *ctx)
     ovsdb_idl_add_column(ctx->idl, &ovsrec_port_col_interfaces);
 
     ovsdb_idl_add_column(ctx->idl, &ovsrec_interface_col_name);
-    ovsdb_idl_add_column(ctx->idl, &ovsrec_interface_col_ofport);
 }
 
 static void
@@ -1590,7 +1559,6 @@ cmd_add_br(struct vsctl_context *ctx)
 {
     bool may_exist = shash_find(&ctx->options, "--may-exist") != NULL;
     const char *br_name, *parent_name;
-    struct ovsrec_interface *iface;
     int vlan;
 
     br_name = ctx->argv[1];
@@ -1644,6 +1612,7 @@ cmd_add_br(struct vsctl_context *ctx)
 
     if (!parent_name) {
         struct ovsrec_port *port;
+        struct ovsrec_interface *iface;
         struct ovsrec_bridge *br;
 
         iface = ovsrec_interface_insert(ctx->txn);
@@ -1662,6 +1631,7 @@ cmd_add_br(struct vsctl_context *ctx)
     } else {
         struct vsctl_bridge *parent;
         struct ovsrec_port *port;
+        struct ovsrec_interface *iface;
         struct ovsrec_bridge *br;
         int64_t tag = vlan;
 
@@ -1687,7 +1657,6 @@ cmd_add_br(struct vsctl_context *ctx)
         bridge_insert_port(br, port);
     }
 
-    post_db_reload_expect_iface(iface);
     vsctl_context_invalidate_cache(ctx);
 }
 
@@ -1981,7 +1950,6 @@ add_port(struct vsctl_context *ctx,
     for (i = 0; i < n_ifaces; i++) {
         ifaces[i] = ovsrec_interface_insert(ctx->txn);
         ovsrec_interface_set_name(ifaces[i], iface_names[i]);
-        post_db_reload_expect_iface(ifaces[i]);
     }
 
     port = ovsrec_port_insert(ctx->txn);
@@ -2048,20 +2016,13 @@ cmd_del_port(struct vsctl_context *ctx)
 {
     bool must_exist = !shash_find(&ctx->options, "--if-exists");
     bool with_iface = shash_find(&ctx->options, "--with-iface") != NULL;
-    const char *target = ctx->argv[ctx->argc - 1];
     struct vsctl_port *port;
 
     vsctl_context_populate_cache(ctx);
-    if (find_bridge(ctx, target, false)) {
-        if (must_exist) {
-            vsctl_fatal("cannot delete port %s because it is the local port "
-                        "for bridge %s (deleting this port requires deleting "
-                        "the entire bridge)", target, target);
-        }
-        port = NULL;
-    } else if (!with_iface) {
-        port = find_port(ctx, target, must_exist);
+    if (!with_iface) {
+        port = find_port(ctx, ctx->argv[ctx->argc - 1], must_exist);
     } else {
+        const char *target = ctx->argv[ctx->argc - 1];
         struct vsctl_iface *iface;
 
         port = find_port(ctx, target, false);
@@ -3384,7 +3345,6 @@ set_column(const struct vsctl_table_class *table,
 
         ovsdb_datum_union(&datum, ovsdb_idl_read(row, column),
                           &column->type, false);
-        ovsdb_idl_txn_verify(row, column);
         ovsdb_idl_txn_write(row, column, &datum);
     } else {
         struct ovsdb_datum datum;
@@ -3663,7 +3623,7 @@ post_create(struct vsctl_context *ctx)
     struct uuid dummy;
 
     if (!uuid_from_string(&dummy, ds_cstr(&ctx->output))) {
-        OVS_NOT_REACHED();
+        NOT_REACHED();
     }
     real = ovsdb_idl_txn_get_insert_uuid(ctx->txn, &dummy);
     if (real) {
@@ -3671,52 +3631,6 @@ post_create(struct vsctl_context *ctx)
         ds_put_format(&ctx->output, UUID_FMT, UUID_ARGS(real));
     }
     ds_put_char(&ctx->output, '\n');
-}
-
-static void
-post_db_reload_check_init(void)
-{
-    n_neoteric_ifaces = 0;
-}
-
-static void
-post_db_reload_expect_iface(const struct ovsrec_interface *iface)
-{
-    if (n_neoteric_ifaces >= allocated_neoteric_ifaces) {
-        neoteric_ifaces = x2nrealloc(neoteric_ifaces,
-                                     &allocated_neoteric_ifaces,
-                                     sizeof *neoteric_ifaces);
-    }
-    neoteric_ifaces[n_neoteric_ifaces++] = iface->header_.uuid;
-}
-
-static void
-post_db_reload_do_checks(const struct vsctl_context *ctx)
-{
-    struct ds dead_ifaces = DS_EMPTY_INITIALIZER;
-    size_t i;
-
-    for (i = 0; i < n_neoteric_ifaces; i++) {
-        const struct uuid *uuid;
-
-        uuid = ovsdb_idl_txn_get_insert_uuid(ctx->txn, &neoteric_ifaces[i]);
-        if (uuid) {
-            const struct ovsrec_interface *iface;
-
-            iface = ovsrec_interface_get_for_uuid(ctx->idl, uuid);
-            if (iface && (!iface->ofport || *iface->ofport == -1)) {
-                ds_put_format(&dead_ifaces, "'%s', ", iface->name);
-            }
-        }
-    }
-
-    if (dead_ifaces.length) {
-        dead_ifaces.length -= 2; /* Strip off trailing comma and space. */
-        ovs_error(0, "Error detected while setting up %s.  See ovs-vswitchd "
-                  "log for details.", ds_cstr(&dead_ifaces));
-    }
-
-    ds_destroy(&dead_ifaces);
 }
 
 static void
@@ -3827,7 +3741,7 @@ evaluate_relop(const struct ovsdb_datum *a, const struct ovsdb_datum *b,
         return ovsdb_datum_includes_all(b, a, type);
 
     default:
-        OVS_NOT_REACHED();
+        NOT_REACHED();
     }
 }
 
@@ -4075,7 +3989,6 @@ do_vsctl(const char *args, struct vsctl_command *commands, size_t n_commands,
                                 &ovsrec_open_vswitch_col_next_cfg);
     }
 
-    post_db_reload_check_init();
     symtab = ovsdb_symbol_table_create();
     for (c = commands; c < &commands[n_commands]; c++) {
         ds_init(&c->output);
@@ -4132,11 +4045,13 @@ do_vsctl(const char *args, struct vsctl_command *commands, size_t n_commands,
         }
     }
     error = xstrdup(ovsdb_idl_txn_get_error(txn));
+    ovsdb_idl_txn_destroy(txn);
+    txn = the_idl_txn = NULL;
 
     switch (status) {
     case TXN_UNCOMMITTED:
     case TXN_INCOMPLETE:
-        OVS_NOT_REACHED();
+        NOT_REACHED();
 
     case TXN_ABORTED:
         /* Should not happen--we never call ovsdb_idl_txn_abort(). */
@@ -4157,7 +4072,7 @@ do_vsctl(const char *args, struct vsctl_command *commands, size_t n_commands,
         vsctl_fatal("database not locked");
 
     default:
-        OVS_NOT_REACHED();
+        NOT_REACHED();
     }
     free(error);
 
@@ -4200,16 +4115,10 @@ do_vsctl(const char *args, struct vsctl_command *commands, size_t n_commands,
     free(commands);
 
     if (wait_for_reload && status != TXN_UNCHANGED) {
-        /* Even, if --retry flag was not specified, ovs-vsctl still
-         * has to retry to establish OVSDB connection, if wait_for_reload
-         * was set.  Otherwise, ovs-vsctl would end up waiting forever
-         * until cur_cfg would be updated. */
-        ovsdb_idl_enable_reconnect(idl);
         for (;;) {
             ovsdb_idl_run(idl);
             OVSREC_OPEN_VSWITCH_FOR_EACH (ovs, idl) {
                 if (ovs->cur_cfg >= next_cfg) {
-                    post_db_reload_do_checks(&ctx);
                     goto done;
                 }
             }
@@ -4218,7 +4127,6 @@ do_vsctl(const char *args, struct vsctl_command *commands, size_t n_commands,
         }
     done: ;
     }
-    ovsdb_idl_txn_destroy(txn);
     ovsdb_idl_destroy(idl);
 
     exit(EXIT_SUCCESS);
@@ -4313,7 +4221,3 @@ static const struct vsctl_command_syntax all_commands[] = {
     {NULL, 0, 0, NULL, NULL, NULL, NULL, RO},
 };
 
-static const struct vsctl_command_syntax *get_all_commands(void)
-{
-    return all_commands;
-}

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2011, 2012, 2013 Nicira, Inc.
+ * Copyright (c) 2010, 2011, 2012 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -49,7 +49,7 @@ static double max_rate;
 
 static double timeout;
 
-static const struct command *get_all_commands(void);
+static const struct command all_commands[];
 
 static void parse_options(int argc, char *argv[]);
 static void usage(void);
@@ -72,7 +72,7 @@ main(int argc, char *argv[])
     set_program_name(argv[0]);
     vlog_set_levels(NULL, VLF_ANY_FACILITY, VLL_EMER);
     parse_options(argc, argv);
-    run_command(argc - optind, argv + optind, get_all_commands());
+    run_command(argc - optind, argv + optind, all_commands);
     return 0;
 }
 
@@ -101,11 +101,11 @@ parse_target(const char *s_, struct in_addr *addr,
     *min = *max = 0;
     if (colon && colon[1] != '\0') {
         const char *ports = colon + 1;
-        if (ovs_scan(ports, "%hu-%hu", min, max)) {
+        if (sscanf(ports, "%hu-%hu", min, max) == 2) {
             if (*min > *max) {
                 ovs_fatal(0, "%s: minimum is greater than maximum", s_);
             }
-        } else if (ovs_scan(ports, "%hu", min)) {
+        } else if (sscanf(ports, "%hu", min) == 1) {
             *max = *min;
         } else {
             ovs_fatal(0, "%s: number or range expected", s_);
@@ -118,7 +118,7 @@ parse_target(const char *s_, struct in_addr *addr,
 static void
 parse_options(int argc, char *argv[])
 {
-    static const struct option long_options[] = {
+    static struct option long_options[] = {
         {"local", required_argument, NULL, 'l'},
         {"remote", required_argument, NULL, 'r'},
         {"batches", required_argument, NULL, 'b'},
@@ -472,7 +472,6 @@ cmd_rate(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
             printf("%.3f s elapsed, %u OK, %u failed, avg %.1f/s\n",
                    elapsed / 1000.0, completed - failures, failures,
                    completed / (elapsed / 1000.0));
-            fflush(stdout);
             prev = now;
 
             if (timeout && elapsed > timeout * 1000LL) {
@@ -617,8 +616,3 @@ static const struct command all_commands[] = {
     { "help", 0, 0, cmd_help },
     { NULL, 0, 0, NULL },
 };
-
-static const struct command *get_all_commands(void)
-{
-  return all_commands;
-}

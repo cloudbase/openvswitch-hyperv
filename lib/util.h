@@ -173,6 +173,23 @@ is_pow2(uintmax_t x)
 #define ASSIGN_CONTAINER(OBJECT, POINTER, MEMBER) \
     ((OBJECT) = OBJECT_CONTAINING(POINTER, OBJECT, MEMBER), 1)
 
+/* Use "%"PRIuSIZE to format size_t with printf(). */
+#ifdef _WIN32
+#define PRIdSIZE "Id"
+#define PRIiSIZE "Ii"
+#define PRIoSIZE "Io"
+#define PRIuSIZE "Iu"
+#define PRIxSIZE "Ix"
+#define PRIXSIZE "IX"
+#else
+#define PRIdSIZE "zd"
+#define PRIiSIZE "zi"
+#define PRIoSIZE "zo"
+#define PRIuSIZE "zu"
+#define PRIxSIZE "zx"
+#define PRIXSIZE "zX"
+#endif
+
 #ifdef  __cplusplus
 extern "C" {
 #endif
