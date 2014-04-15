@@ -33,8 +33,13 @@ struct test {
     const char *name;
     void (*function)(void);
 };
+#ifdef _WIN32
+#define NUMBER 12
+#else
+#define NUMBER
+#endif
 
-static const struct test tests[];
+static const struct test tests[NUMBER];
 
 #define CHECK(A, B) check(A, B, #A, #B, __FILE__, __LINE__)
 static void
