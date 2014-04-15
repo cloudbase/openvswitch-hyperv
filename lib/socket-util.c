@@ -402,7 +402,15 @@ bind_unix_socket(int fd, struct sockaddr *sun, socklen_t sun_len)
 {
     /* According to _Unix Network Programming_, umask should affect bind(). */
     mode_t old_umask = umask(0077);
-    int error = bind(fd, sun, sun_len) ? errno : 0;
+#ifndef _WIN32
+	int error = bind(fd, sun, sun_len) ? errno : 0;
+#else
+	struct  sockaddr_in service;
+	service.sin_family = AF_INET;
+	service.sin_addr.s_addr = inet_addr("127.0.0.1");
+	service.sin_port = 0; //random
+	int error = bind(fd, (SOCKADDR *)&service, sizeof(service));
+#endif
     umask(old_umask);
     return error;
 }
@@ -420,7 +428,11 @@ make_unix_socket(int style, bool nonblock,
     int error;
     int fd;
 
-    fd = socket(PF_UNIX, style, 0);
+#ifndef _WIN32
+	fd = socket(PF_UNIX, style, 0);
+#else
+	fd = socket(PF_INET, style, 0);
+#endif
     if (fd < 0) {
         return -errno;
     }
