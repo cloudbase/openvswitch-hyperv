@@ -326,3 +326,13 @@ int sigprocmask(int signum, const struct sigaction *act, struct sigaction *oldac
 {
     return 0;
 }
+
+int getloadavg(double loadavg[], int nelem)
+{
+    int i;
+
+    for (i = 0; i < nelem; i++) {
+        loadavg[i] = 0.0;
+    }
+    return i;
+}
