@@ -68,6 +68,8 @@ get_entropy(void *buffer, size_t n)
 	CryptReleaseContext(crypt_prov, 0);
 
 #endif
+
+	return error;
 }
 
 /* Initializes 'buffer' with 'n' bytes of high-quality random numbers.  Exits
