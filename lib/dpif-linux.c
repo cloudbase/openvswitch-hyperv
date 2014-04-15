@@ -334,8 +334,14 @@ add_channel(struct dpif_linux *dpif, uint32_t port_no, struct nl_sock *sock)
     memset(&event, 0, sizeof event);
     event.events = EPOLLIN;
     event.data.u32 = port_no;
-    if (epoll_ctl(dpif->epoll_fd, EPOLL_CTL_ADD, nl_sock_fd(sock),
-                  &event) < 0) {
+
+#ifndef _WIN32
+	if (epoll_ctl(dpif->epoll_fd, EPOLL_CTL_ADD, nl_sock_fd(sock),
+		&event) < 0) {
+#else
+		if (0)//TODO: perhaps GetQueuedCompletionStatus, or something similar, should have been used here
+		{
+#endif
         return errno;
     }
 
@@ -360,7 +366,9 @@ del_channel(struct dpif_linux *dpif, uint32_t port_no)
         return;
     }
 
+#ifndef _WIN32
     epoll_ctl(dpif->epoll_fd, EPOLL_CTL_DEL, nl_sock_fd(ch->sock), NULL);
+#endif
     dpif->event_offset = dpif->n_events = 0;
 
     nl_sock_destroy(ch->sock);
@@ -1172,7 +1180,11 @@ dpif_linux_recv_set(struct dpif *dpif_, bool enable)
         struct dpif_port_dump port_dump;
         struct dpif_port port;
 
-        dpif->epoll_fd = epoll_create(10);
+#ifndef _WIN32
+		dpif->epoll_fd = epoll_create(10);
+#else
+		dpif->epoll_fd = socket(AF_UNSPEC, SOCK_STREAM, IPPROTO_TCP);
+#endif
         if (dpif->epoll_fd < 0) {
             return errno;
         }
@@ -1311,8 +1323,12 @@ dpif_linux_recv(struct dpif *dpif_, struct dpif_upcall *upcall,
         dpif->event_offset = dpif->n_events = 0;
 
         do {
-            retval = epoll_wait(dpif->epoll_fd, dpif->epoll_events,
-                                dpif->uc_array_size, 0);
+#ifndef _WIN32
+			retval = epoll_wait(dpif->epoll_fd, dpif->epoll_events,
+				dpif->uc_array_size, 0);
+#else
+			retval = poll(dpif->channels, 1, 2);
+#endif
         } while (retval < 0 && errno == EINTR);
         if (retval < 0) {
             static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 1);
