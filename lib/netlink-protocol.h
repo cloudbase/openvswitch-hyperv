@@ -106,8 +106,14 @@ struct nlattr {
 };
 BUILD_ASSERT_DECL(sizeof(struct nlattr) == 4);
 
+#if !defined(_WIN32)
 #define NLA_ALIGNTO 4
 #define NLA_ALIGN(SIZE) ROUND_UP(SIZE, NLA_ALIGNTO)
+#else
+#define NLA_ALIGNTO 0
+#define NLA_ALIGN(SIZE) SIZE
+#endif
+
 #define NLA_HDRLEN ((int) NLA_ALIGN(sizeof(struct nlattr)))
 
 #define GENL_MIN_ID     NLMSG_MIN_TYPE

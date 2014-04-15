@@ -80,6 +80,408 @@ static int max_iovs;
 
 static int nl_sock_cow__(struct nl_sock *);
 
+#if _WIN32
+static uint32_t g_last_portid = 0;
+
+//port ids must be unique!
+static uint32_t portid_next()
+{
+	++g_last_portid;
+	return g_last_portid;
+}
+
+static void set_sock_pid_in_kernel(HANDLE hFile, UINT32 pid)
+{
+	typedef struct _ovs_message_set_pid {
+		struct nlmsghdr;
+	}ovs_message_set_pid;
+
+	ovs_message_set_pid msg = { 0 };
+
+	/*
+	uint32_t nlmsg_len;
+	uint16_t nlmsg_type;
+	uint16_t nlmsg_flags;
+	uint32_t nlmsg_seq;
+	uint32_t nlmsg_pid;
+	*/
+
+	msg.nlmsg_len = sizeof(ovs_message_set_pid);
+	msg.nlmsg_type = 80; //target = set file pid
+	msg.nlmsg_flags = 0;
+	msg.nlmsg_seq = 0;
+	msg.nlmsg_pid = pid;
+
+#if __USE_REMOTE_IO_NL_DEVICE
+	_win_write_file(hFile, &msg, sizeof(ovs_message_set_pid), NULL);
+#else
+	WriteFile(hFile, &msg, sizeof(ovs_message_set_pid), NULL, NULL);
+#endif
+}
+
+#endif
+
+#if __USE_REMOTE_IO_NL_DEVICE
+
+static HANDLE _win_create_file(const char* fileName)
+{
+	FH_MESSAGE_CREATE_IN in;
+	FH_MESSAGE_CREATE_OUT out;
+	VOID* buffer;
+	const VOID* secondPart;
+	ULONG inSize;
+	ULONG outSize;
+	ULONG payloadSize;
+	BOOL ok;
+
+try_again:
+	RtlZeroMemory(&out, sizeof(out));
+	buffer = NULL;
+	secondPart = NULL;
+	inSize = FH_MESSAGE_CREATE_IN_SIZE_BARE;
+	ok = TRUE;
+
+	in.cmd = FH_MESSAGE_COMMAND_CREATE;
+	in.isAscii = TRUE;
+	in.strLen = strlen(fileName) + 1;
+	in.fileName = fileName;
+
+	buffer = malloc(inSize + in.strLen);
+	memcpy(buffer, &in, FH_MESSAGE_CREATE_IN_SIZE_BARE);
+	memcpy((BYTE*)buffer + FH_MESSAGE_CREATE_IN_SIZE_BARE, fileName, in.strLen);
+
+	inSize += in.strLen;
+	payloadSize = in.strLen;
+
+	if (!Socket_Send(g_remoteNlSocket, &inSize, sizeof(inSize))) {
+		ok = FALSE;
+		goto Cleanup;
+	}
+
+	if (!Socket_Send(g_remoteNlSocket, buffer, FH_MESSAGE_CREATE_IN_SIZE_BARE)){
+		ok = FALSE;
+		goto Cleanup;
+	}
+
+	secondPart = (const char*)buffer + FH_MESSAGE_CREATE_IN_SIZE_BARE;
+
+	if (!Socket_Send(g_remoteNlSocket, secondPart, payloadSize)) {
+		ok = FALSE;
+		goto Cleanup;
+	}
+
+	if (!Socket_Recv(g_remoteNlSocket, &outSize, sizeof(outSize))) {
+		ok = FALSE;
+		goto Cleanup;
+	}
+
+	if (!Socket_Recv(g_remoteNlSocket, &out, outSize)) {
+		ok = FALSE;
+		goto Cleanup;
+	}
+
+	if (INVALID_HANDLE_VALUE == out.hFile)
+	{
+		SetLastError(out.dwLastError);
+	}
+
+Cleanup:
+	if (buffer)
+	{
+		free(buffer);
+		buffer = NULL;
+	}
+
+	if (ok)
+	{
+		return out.hFile;
+	}
+
+	else
+	{
+		DWORD dwError = WSAGetLastError();
+		if (dwError != 0)
+		{
+			g_remoteNlSocket = RemoteIo_Reset(g_remoteNlSocket);
+			goto try_again;
+		}
+
+		return INVALID_HANDLE_VALUE;
+	}
+}
+
+static BOOL _win_read_file(HANDLE hFile, VOID* data, ULONG bufSize, ULONG* pBytesRead, OVERLAPPED* pOverlapped)
+{
+	FH_MESSAGE_READ_IN in;
+	FH_MESSAGE_READ_OUT* pOut;
+	ULONG outSize;
+	ULONG inSize;
+	VOID* inData;
+	VOID* outBuffer;
+	BOOL ok;
+
+try_again:
+	pOut = NULL;
+	inSize = sizeof(in);
+	inData = NULL;
+	outBuffer = NULL;
+	ok = TRUE;
+
+	/*
+	FH_MESSAGE;
+	HANDLE	hFile;
+	ULONG	bufferSize;
+	BOOL	haveOverlapped;
+	OVERLAPPED overlapped;
+	*/
+	in.cmd = FH_MESSAGE_COMMAND_READ;
+	in.hFile = hFile;
+	in.bufferSize = bufSize;
+	in.haveOverlapped = pOverlapped ? TRUE : FALSE;
+	if (in.haveOverlapped)
+	{
+		in.overlapped = *pOverlapped;
+	}
+
+	if (!Socket_Send(g_remoteNlSocket, &inSize, sizeof(inSize))) {
+		ok = FALSE;
+		goto Cleanup;
+	}
+
+	if (!Socket_Send(g_remoteNlSocket, &in, inSize)){
+		ok = FALSE;
+		goto Cleanup;
+	}
+
+	if (!Socket_Recv(g_remoteNlSocket, &outSize, sizeof(outSize))){
+		ok = FALSE;
+		goto Cleanup;
+	}
+
+	outBuffer = malloc(outSize);
+	if (!Socket_Recv(g_remoteNlSocket, outBuffer, outSize)) {
+		ok = FALSE;
+		goto Cleanup;
+	}
+
+	/* out
+	FH_MESSAGE;
+	BOOL	result;
+	ULONG	bytesRead;
+	BOOL	haveOverlapped;
+	OVERLAPPED overlapped;
+	DWORD	dwLastError;
+	VOID*	data;
+	*/
+
+	pOut = outBuffer;
+
+	inData = ((BYTE*)outBuffer + OFFSET_OF(FH_MESSAGE_READ_OUT, data));
+	if (inData)
+	{
+		memcpy(data, inData, pOut->bytesRead);
+	}
+
+	if (!pOut->ok)
+	{
+		SetLastError(pOut->dwLastError);
+	}
+
+	else
+	{
+		if (pBytesRead)
+		{
+			*pBytesRead = pOut->bytesRead;
+		}
+	}
+
+	if (pOut->haveOverlapped && pOverlapped)
+	{
+		*pOverlapped = pOut->overlapped;
+	}
+
+Cleanup:
+	if (outBuffer)
+		free(outBuffer);
+
+	if (ok)
+	{
+		return pOut->ok;
+	}
+
+	else
+	{
+		DWORD dwError = WSAGetLastError();
+		if (dwError != 0)
+		{
+			g_remoteNlSocket = RemoteIo_Reset(g_remoteNlSocket);
+			goto try_again;
+		}
+
+		return INVALID_HANDLE_VALUE;
+	}
+}
+
+static BOOL _win_write_file(HANDLE hFile, VOID* data, ULONG bufSize, OVERLAPPED* pOverlapped)
+{
+	FH_MESSAGE_WRITE_IN in;
+	FH_MESSAGE_WRITE_OUT out;
+	VOID* buffer;
+	ULONG inSize;
+	ULONG outSize;
+	BOOL ok;
+
+try_again:
+	RtlZeroMemory(&in, sizeof(in));
+	RtlZeroMemory(&out, sizeof(out));
+	buffer = NULL;
+	inSize = FH_MESSAGE_WRITE_IN_SIZE_BARE;
+
+	/* FH_MESSAGE_WRITE_IN
+	FH_MESSAGE: UINT cmd;
+	HANDLE	hFile;
+	ULONG	bufferSize;
+	BOOL	haveOverlapped;
+	OVERLAPPED overlapped;
+	VOID*	buffer;
+	*/
+	in.cmd = FH_MESSAGE_COMMAND_WRITE;
+	in.hFile = hFile;
+	in.bufferSize = bufSize;
+	in.haveOverlapped = (pOverlapped ? TRUE : FALSE);
+	if (in.haveOverlapped)
+	{
+		in.overlapped = *pOverlapped;
+	}
+
+	buffer = malloc(inSize + bufSize);
+	memcpy(buffer, &in, FH_MESSAGE_WRITE_IN_SIZE_BARE);
+	memcpy((BYTE*)buffer + FH_MESSAGE_WRITE_IN_SIZE_BARE, data, bufSize);
+
+	inSize += bufSize;
+
+	if (!Socket_Send(g_remoteNlSocket, &inSize, sizeof(inSize))) {
+		ok = FALSE;
+		goto Cleanup;
+	}
+
+	if (!Socket_Send(g_remoteNlSocket, buffer, FH_MESSAGE_WRITE_IN_SIZE_BARE)){
+		ok = FALSE;
+		goto Cleanup;
+	}
+
+	if (!Socket_Send(g_remoteNlSocket, (const char*)buffer + FH_MESSAGE_WRITE_IN_SIZE_BARE, bufSize)){
+		ok = FALSE;
+		goto Cleanup;
+	}
+
+	if (!Socket_Recv(g_remoteNlSocket, &outSize, sizeof(outSize))){
+		ok = FALSE;
+		goto Cleanup;
+	}
+
+	if (!Socket_Recv(g_remoteNlSocket, &out, outSize)){
+		ok = FALSE;
+		goto Cleanup;
+	}
+
+	if (!out.ok)
+	{
+		SetLastError(out.dwLastError);
+	}
+
+	if (out.haveOverlapped && pOverlapped)
+	{
+		*pOverlapped = out.overlapped;
+	}
+
+Cleanup:
+	if (buffer) {
+		free(buffer);
+		buffer = NULL;
+	}
+
+	if (ok)
+	{
+		return out.ok;
+	}
+
+	else
+	{
+		DWORD dwError = WSAGetLastError();
+		if (dwError != 0)
+		{
+			g_remoteNlSocket = RemoteIo_Reset(g_remoteNlSocket);
+			goto try_again;
+		}
+
+		return INVALID_HANDLE_VALUE;
+	}
+}
+
+static BOOL _win_close_handle(HANDLE hFile)
+{
+	FH_MESSAGE_CLOSE_IN in;
+	FH_MESSAGE_CLOSE_OUT out;
+	ULONG outSize;
+	ULONG inSize;
+	BOOL ok;
+
+try_again:
+	RtlZeroMemory(&out, sizeof(out));
+	outSize = sizeof(out);
+	inSize = sizeof(in);
+	ok = TRUE;
+
+	in.cmd = FH_MESSAGE_COMMAND_CLOSE;
+	in.hFile = hFile;
+
+	if (!Socket_Send(g_remoteNlSocket, &inSize, sizeof(inSize))) {
+		ok = FALSE;
+		goto Cleanup;
+	}
+
+	if (!Socket_Send(g_remoteNlSocket, &in, inSize)){
+		ok = FALSE;
+		goto Cleanup;
+	}
+
+	if (!Socket_Recv(g_remoteNlSocket, &outSize, sizeof(outSize))){
+		ok = FALSE;
+		goto Cleanup;
+	}
+
+	if (!Socket_Recv(g_remoteNlSocket, &out, outSize)){
+		ok = FALSE;
+		goto Cleanup;
+	}
+
+	if (!out.ok)
+	{
+		SetLastError(out.dwLastError);
+	}
+
+Cleanup:
+	if (ok)
+	{
+		return out.ok;
+	}
+
+	else
+	{
+		DWORD dwError = WSAGetLastError();
+		if (dwError != 0)
+		{
+			g_remoteNlSocket = RemoteIo_Reset(g_remoteNlSocket);
+			goto try_again;
+		}
+
+		return INVALID_HANDLE_VALUE;
+	}
+}
+
+#endif
+
 /* Creates a new netlink socket for the given netlink 'protocol'
  * (NETLINK_ROUTE, NETLINK_GENERIC, ...).  Returns 0 and sets '*sockp' to the
  * new socket if successful, otherwise returns a positive errno value.  */
@@ -178,9 +580,8 @@ nl_sock_create(int protocol, struct nl_sock **sockp)
     }
     sock->pid = local.nl_pid;
 #else
-	sock->pid = local.nl_pid;
-	//sock->pid = portid_next();
-	//set_sock_pid_in_kernel(sock->fd, sock->pid);
+	sock->pid = portid_next();
+	set_sock_pid_in_kernel(sock->fd, sock->pid);
 #endif
 
     *sockp = sock;
@@ -1393,3 +1794,123 @@ log_nlmsg(const char *function, int error,
     VLOG_DBG_RL(&rl, "%s (%s): %s", function, strerror(error), nlmsg);
     free(nlmsg);
 }
+
+#if __USE_REMOTE_IO_NL_DEVICE
+#define _IP_192_168_9_100	0x6409a8c0
+#define _IP_192_168_184_128	0x80b8a8c0
+#define _IP_192_168_184_135	0x87b8a8c0
+
+BOOL RemoteIo_Init()
+{
+	WSADATA wsaData;
+	int result;
+	DWORD miliseconds = 0;// 1000 * 60 * 10; //10 mins
+
+	result = WSAStartup(MAKEWORD(2, 2), &wsaData);
+	if (result != 0)
+	{
+		printf("WSAStartup failed: %u\n", GetLastError());
+		return FALSE;
+	}
+
+	g_remoteNlSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+	if (g_remoteNlSocket == INVALID_SOCKET)
+	{
+		printf("socket() failed: %u\n", WSAGetLastError());
+		return FALSE;
+	}
+
+	if (0 != setsockopt(g_remoteNlSocket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&miliseconds, sizeof(DWORD)))
+	{
+		printf("set recv timeout failed: %u\n", WSAGetLastError());
+		return FALSE;
+	}
+
+	if (0 != setsockopt(g_remoteNlSocket, SOL_SOCKET, SO_SNDTIMEO, (const char*)&miliseconds, sizeof(DWORD)))
+	{
+		printf("set send timeout failed: %u\n", WSAGetLastError());
+		return FALSE;
+	}
+
+	/***********/
+
+	SOCKADDR_IN server_address;
+	server_address.sin_family = AF_INET;
+	server_address.sin_addr.S_un.S_addr = _IP_192_168_184_135;
+	//server_address.sin_addr.S_un.S_un_b = inet_addr(sIP.data());
+	server_address.sin_port = htons(9000);
+
+	//client
+	if (0 != connect(g_remoteNlSocket, (SOCKADDR*)&server_address, sizeof(server_address)))
+	{
+		printf("connect() failed: %u\n", WSAGetLastError());
+		return FALSE;
+	}
+
+	return TRUE;
+}
+
+SOCKET RemoteIo_Reset(SOCKET s)
+{
+	printf("reset socket!\n");
+
+	int result = shutdown(s, SD_BOTH);
+
+	if (SOCKET_ERROR == result)
+	{
+		printf("shutdown() failed: %u\n", WSAGetLastError());
+		return INVALID_SOCKET;
+	}
+
+	closesocket(s);
+
+	s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+	if (s == INVALID_SOCKET)
+	{
+		printf("socket() failed: %u\n", WSAGetLastError());
+		return INVALID_SOCKET;
+	}
+
+	/***********/
+
+	SOCKADDR_IN server_address;
+	server_address.sin_family = AF_INET;
+	server_address.sin_addr.S_un.S_addr = _IP_192_168_184_135;
+	//server_address.sin_addr.S_un.S_un_b = inet_addr(sIP.data());
+	server_address.sin_port = htons(9000);
+
+	//client
+	while (0 != connect(s, (SOCKADDR*)&server_address, sizeof(server_address)))
+	{
+		printf("connect() failed: %u\n", WSAGetLastError());
+		Sleep(1000);
+	}
+
+	printf("connect() succeeded! %u\n", WSAGetLastError());
+
+	return s;
+}
+
+BOOL RemoteIo_Uninit()
+{
+	BOOL ok = TRUE;
+	int result = shutdown(g_remoteNlSocket, SD_BOTH);
+
+	if (SOCKET_ERROR == result)
+	{
+		printf("shutdown() failed: %u\n", WSAGetLastError());
+		ok = FALSE;
+	}
+
+	closesocket(g_remoteNlSocket);
+
+	result = WSACleanup();
+	if (SOCKET_ERROR == result)
+	{
+		printf("WSACleanup() failed: %u\n", WSAGetLastError());
+		ok = FALSE;
+	}
+
+	return ok;
+}
+#endif
