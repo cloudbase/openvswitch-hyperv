@@ -82,10 +82,12 @@ fatal_signal_init(void)
 
             sigaddset(&fatal_signal_set, sig_nr);
             xsigaction(sig_nr, NULL, &old_sa);
+#ifndef _WIN32
             if (old_sa.sa_handler == SIG_DFL
                 && signal(sig_nr, fatal_signal_handler) == SIG_ERR) {
                 VLOG_FATAL("signal failed (%s)", strerror(errno));
             }
+#endif
         }
         atexit(atexit_handler);
     }
