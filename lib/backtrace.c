@@ -113,7 +113,37 @@ backtrace_capture(struct backtrace *backtrace)
     }
     backtrace->n_frames = n;
 }
-#else  /* !HAVE_BACKTRACE && !__GNUC__ */
+#elif defined(_WIN32)
+#include <windows.h>
+#include <DbgHelp.h>
+void
+backtrace_capture(struct backtrace *b)
+{
+	unsigned short frames_nr;
+	void *frames[BACKTRACE_MAX_FRAMES];
+	int i;
+	SYMBOL_INFO * symbol;
+	HANDLE process;
+
+	process = GetCurrentProcess();
+
+	SymInitialize(process, NULL, TRUE);
+
+	frames_nr = CaptureStackBackTrace(0, 100, frames, NULL);
+	symbol = (SYMBOL_INFO *)calloc(sizeof(SYMBOL_INFO)+256 * sizeof(char), 1);
+	symbol->MaxNameLen = 255;
+	symbol->SizeOfStruct = sizeof(SYMBOL_INFO);
+
+	for (i = 0; i < frames_nr; i++)
+	{
+		SymFromAddr(process, (DWORD64)(frames[i]), 0, symbol);
+
+		b->frames[i] = (uintptr_t)frames[i];
+	}
+
+	free(symbol);
+}
+#else  /* !HAVE_BACKTRACE && !__GNUC__  && !_WIN32 */
 void
 backtrace_capture(struct backtrace *backtrace)
 {
