@@ -65,8 +65,13 @@ static bool may_create;
  * So far only undocumented commands honor this option, so we don't document
  * the option itself. */
 static int verbosity;
+#ifdef _WIN32
+#define NUMBER 16
+#else
+#define NUMBER
+#endif
 
-static const struct command all_commands[];
+static const struct command all_commands[NUMBER];
 
 static void usage(void) NO_RETURN;
 static void parse_options(int argc, char *argv[]);
@@ -74,10 +79,42 @@ static void parse_options(int argc, char *argv[]);
 int
 main(int argc, char *argv[])
 {
+#ifdef _WIN32
+	WORD wVersionRequested;
+	WSADATA wsaData;
+	int err;
+
+#if __USE_REMOTE_IO_NL_DEVICE
+	if (!RemoteIo_Init())
+	{
+		printf("remote io init failed!\n");
+		return -1;
+	}
+#endif
+	/* Use the MAKEWORD(lowbyte, highbyte) macro declared in Windef.h */
+	wVersionRequested = MAKEWORD(2, 2);
+
+	err = WSAStartup(wVersionRequested, &wsaData);
+	if (err != 0) {
+		/* Tell the user that we could not find a usable */
+		/* Winsock DLL.                                  */
+		printf("WSAStartup failed with error: %d\n", err);
+		return 1;
+	}
+#endif
     set_program_name(argv[0]);
     parse_options(argc, argv);
     signal(SIGPIPE, SIG_IGN);
     run_command(argc - optind, argv + optind, all_commands);
+
+#if __USE_REMOTE_IO_NL_DEVICE
+	if (!RemoteIo_Uninit())
+	{
+		printf("remote io uninit failed!\n");
+		return -1;
+	}
+#endif
+
     return 0;
 }
 
