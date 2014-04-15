@@ -370,7 +370,11 @@ ds_put_hex_dump(struct ds *ds, const void *buf_, size_t size,
       n = end - start;
 
       /* Print line. */
-      ds_put_format(ds, "%08jx  ", (uintmax_t) ROUND_DOWN(ofs, per_line));
+#ifdef _WIN32
+      ds_put_format(ds, "%08x  ", (uintmax_t) ROUND_DOWN(ofs, per_line));
+#else
+	  ds_put_format(ds, "%08jx  ", (uintmax_t)ROUND_DOWN(ofs, per_line));
+#endif
       for (i = 0; i < start; i++)
         ds_put_format(ds, "   ");
       for (; i < end; i++)

@@ -315,7 +315,6 @@ dpif_create_and_open(const char *name, const char *type, struct dpif **dpifp)
         }
     } else if (error) {
         VLOG_WARN("failed to create datapath %s: %s", name, strerror(error));
-		printf("!!!!!!!!!!!!error = %d\n", error);
     }
     return error;
 }

@@ -231,7 +231,11 @@ void
 ovs_abort_valist(int err_no, const char *format, va_list args)
 {
     ovs_error_valist(err_no, format, args);
+#ifndef _WIN32
     abort();
+#else
+	exit(0);
+#endif
 }
 
 /* Prints 'format' on stderr, formatting it like printf() does.  If 'err_no' is
