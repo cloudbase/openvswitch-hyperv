@@ -102,3 +102,4 @@ tests/flows3.txt
 *Release*
 !*Debug*.c
 !*Debug*.h
+*temp.out*
