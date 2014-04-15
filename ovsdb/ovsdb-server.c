@@ -119,6 +119,22 @@ static void load_config(FILE *config_file, struct sset *);
 int
 main(int argc, char *argv[])
 {
+#ifdef _WIN32
+	WORD wVersionRequested;
+	WSADATA wsaData;
+	int err;
+
+	/* Use the MAKEWORD(lowbyte, highbyte) macro declared in Windef.h */
+	wVersionRequested = MAKEWORD(2, 2);
+
+	err = WSAStartup(wVersionRequested, &wsaData);
+	if (err != 0) {
+		/* Tell the user that we could not find a usable */
+		/* Winsock DLL.                                  */
+		printf("WSAStartup failed with error: %d\n", err);
+		return 1;
+	}
+#endif
     char *unixctl_path = NULL;
     char *run_command = NULL;
     struct unixctl_server *unixctl;
@@ -167,7 +183,11 @@ main(int argc, char *argv[])
             dbs[i].filename = argv[i];
         }
     } else {
-        dbs[0].filename = xasprintf("%s/conf.db", ovs_dbdir());
+#ifndef _WIN32
+		dbs[0].filename = xasprintf("%s/conf.db", ovs_dbdir());
+#else
+		dbs[0].filename = xasprintf("conf.db", ovs_dbdir());
+#endif
     }
 
     for (i = 0; i < n_dbs; i++) {
@@ -1105,6 +1125,14 @@ parse_options(int *argcp, char **argvp[],
         }
     }
     free(short_options);
+#ifdef _WIN32
+	if (sset_is_empty(remotes))
+	{
+		sset_add(remotes, "ptcp:5559:127.0.0.1");
+		sset_add(remotes, "remote=db");
+	}
+
+#endif
 
     *argcp -= optind;
     *argvp += optind;
