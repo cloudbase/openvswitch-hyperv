@@ -270,7 +270,31 @@ raw_ctz(uint32_t n)
 }
 #else
 /* Defined in util.c. */
-int raw_ctz(uint32_t n);
+#ifdef _WIN32
+inline int raw_ctz(uint32_t n)
+{
+	unsigned int k;
+	int count = 31;
+
+#define CTZ_STEP(X) \
+	k = n << (X);   \
+	if (k) {	    \
+	count -= X;     \
+	n = k;          \
+	}
+	CTZ_STEP(16);
+	CTZ_STEP(8);
+	CTZ_STEP(4);
+	CTZ_STEP(2);
+	CTZ_STEP(1);
+#undef CTZ_STEP
+
+	return count;
+}
+#else
+int raw_ctz(uint32_t n)
+#endif
+
 #endif
 
 /* Returns the number of trailing 0-bits in 'n', or 32 if 'n' is 0. */

@@ -826,6 +826,7 @@ log_2_ceil(uint32_t n)
 #elif __GNUC__ >= 4 && UINT_MAX == UINT32_MAX
 /* Defined inline in util.h. */
 #else
+#ifndef _WIN32
 static int
 raw_ctz(uint32_t n)
 {
@@ -847,6 +848,7 @@ raw_ctz(uint32_t n)
 
     return count;
 }
+#endif
 #endif
 
 /* Returns the number of 1-bits in 'x', between 0 and 32 inclusive. */
