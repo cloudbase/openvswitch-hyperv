@@ -127,8 +127,13 @@ static bool retry;
 /* Format for table output. */
 static struct table_style table_style = TABLE_STYLE_DEFAULT;
 
+#ifdef _WIN32
+#define NUMBER 42
+#else
+#define NUMBER
+#endif
 /* All supported commands. */
-static const struct vsctl_command_syntax all_commands[];
+static const struct vsctl_command_syntax all_commands[NUMBER];
 
 /* The IDL we're using and the current transaction, if any.
  * This is for use by vsctl_exit() only, to allow it to clean up.
@@ -167,6 +172,22 @@ static bool is_condition_satisfied(const struct vsctl_table_class *,
 int
 main(int argc, char *argv[])
 {
+#ifdef _WIN32
+	WORD wVersionRequested;
+	WSADATA wsaData;
+	int err;
+
+	/* Use the MAKEWORD(lowbyte, highbyte) macro declared in Windef.h */
+	wVersionRequested = MAKEWORD(2, 2);
+
+	err = WSAStartup(wVersionRequested, &wsaData);
+	if (err != 0) {
+		/* Tell the user that we could not find a usable */
+		/* Winsock DLL.                                  */
+		printf("WSAStartup failed with error: %d\n", err);
+		return 1;
+	}
+#endif
     extern struct vlog_module VLM_reconnect;
     struct ovsdb_idl *idl;
     struct vsctl_command *commands;
@@ -704,7 +725,11 @@ default_db(void)
 {
     static char *def;
     if (!def) {
-        def = xasprintf("unix:%s/db.sock", ovs_rundir());
+#ifndef _WIN32
+		def = xasprintf("unix:%s/db.sock", ovs_rundir());
+#else
+		def = xasprintf("tcp:127.0.0.1:5559", ovs_rundir());
+#endif
     }
     return def;
 }
