@@ -489,8 +489,10 @@ int
 nl_sock_create(int protocol, struct nl_sock **sockp)
 {
     struct nl_sock *sock;
+#ifndef _WIN32
     struct sockaddr_nl local, remote;
     socklen_t local_size;
+#endif
     int rcvbuf;
     int retval = 0;
 
@@ -581,7 +583,7 @@ nl_sock_create(int protocol, struct nl_sock **sockp)
     sock->pid = local.nl_pid;
 #else
 	sock->pid = portid_next();
-	set_sock_pid_in_kernel(sock->fd, sock->pid);
+	set_sock_pid_in_kernel((HANDLE)sock->fd, sock->pid);
 #endif
 
     *sockp = sock;
