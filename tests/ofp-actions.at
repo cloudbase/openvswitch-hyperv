@@ -39,7 +39,7 @@ AT_DATA([test-data], [dnl
 # actions=mod_tp_dst:443
 000a 0008 01bb 0000
 
-# actions=enqueue:10:55
+# actions=enqueue:10q55
 000b 0010 000a 000000000000 00000037
 
 # actions=resubmit:5
@@ -138,10 +138,10 @@ AT_DATA([test-data], [dnl
 # actions=CONTROLLER:1234
 0000 0010 fffffffd 04d2 000000000000
 
-# actions=set_vlan_vid:9
+# actions=mod_vlan_vid:9
 0001 0008 0009 0000
 
-# actions=set_vlan_pcp:6
+# actions=mod_vlan_pcp:6
 0002 0008 06 000000
 
 # actions=mod_dl_src:00:11:22:33:44:55
@@ -165,7 +165,7 @@ AT_DATA([test-data], [dnl
 # actions=mod_tp_dst:443
 000a 0008 01bb 0000
 
-# actions=pop_vlan
+# actions=strip_vlan
 0012 0008 00000000
 
 # actions=set_queue:2309737729
@@ -339,7 +339,7 @@ dnl Check that an empty Apply-Actions instruction gets dropped.
 0004 0008 00000000
 
 dnl Duplicate instruction type:
-# bad OF1.1 instructions: ONFBIC_DUP_INSTRUCTION
+# bad OF1.1 instructions: OFPBAC_UNSUPPORTED_ORDER
 0004 0008 00000000 0004 0008 00000000
 
 dnl Instructions not multiple of 8 in length.
@@ -355,10 +355,6 @@ dnl Goto-Table 1 instruction non-zero padding
 # actions=goto_table:1
 #  7: 01 -> 00
 0001 0008 01 000001
-
-dnl Goto-Table 1 instruction go back to the previous table.
-# bad OF1.1 instructions: OFPBRC_BAD_TABLE_ID
-2,0001 0008 01 000000
 
 dnl Goto-Table 1
 # actions=goto_table:1
@@ -381,7 +377,7 @@ dnl Write-Metadata too long.
 0002 0020 00000000 fedcba9876543210 ffffffffffffffff 0000000000000000
 
 dnl Write-Metadata duplicated.
-# bad OF1.1 instructions: ONFBIC_DUP_INSTRUCTION
+# bad OF1.1 instructions: OFPBAC_UNSUPPORTED_ORDER
 0002 0018 00000000 fedcba9876543210 ff00ff00ff00ff00 0002 0018 00000000 fedcba9876543210 ff00ff00ff00ff00
 
 dnl Write-Metadata in wrong position (OpenFlow 1.1+ disregards the order
@@ -416,29 +412,9 @@ dnl and OVS reorders it to the canonical order)
 # 31: ff -> 00
 0001 0008 01 000000 0002 0018 00000000 fedcba9876543210 ffffffffffffffff
 
-dnl empty Write-Actions non-zero padding
-# actions=write_actions(drop)
-#  0: 00 -> (none)
-#  1: 03 -> (none)
-#  2: 00 -> (none)
-#  3: 08 -> (none)
-#  4: 00 -> (none)
-#  5: 00 -> (none)
-#  6: 00 -> (none)
-#  7: 01 -> (none)
-0003 0008 00000001
-
-dnl Check that an empty Write-Actions instruction gets dropped.
-# actions=write_actions(drop)
-#  0: 00 -> (none)
-#  1: 03 -> (none)
-#  2: 00 -> (none)
-#  3: 08 -> (none)
-#  4: 00 -> (none)
-#  5: 00 -> (none)
-#  6: 00 -> (none)
-#  7: 00 -> (none)
-0003 0008 00000000
+dnl Write-Actions not supported yet.
+# bad OF1.1 instructions: OFPBIC_UNSUP_INST
+0003 0008 01 000000
 
 dnl Clear-Actions too-long
 # bad OF1.1 instructions: OFPBIC_BAD_LEN
@@ -476,16 +452,4 @@ AT_CAPTURE_FILE([experr])
 AT_CHECK(
   [ovs-ofctl '-vPATTERN:console:%c|%p|%m' parse-ofp11-instructions < input.txt],
   [0], [expout], [experr])
-AT_CLEANUP
-
-AT_SETUP([ofp-actions - inconsistent MPLS actions])
-OVS_VSWITCHD_START
-dnl OK: Use fin_timeout action on TCP flow
-AT_CHECK([ovs-ofctl -O OpenFlow11 -vwarn add-flow br0 'tcp actions=fin_timeout(idle_timeout=1)'])
-dnl Bad: Use fin_timeout action on TCP flow that has been converted to MPLS
-AT_CHECK([ovs-ofctl -O OpenFlow11 -vwarn add-flow br0 'tcp actions=push_mpls:0x8847,fin_timeout(idle_timeout=1)'],
-         [1], [], [dnl
-ovs-ofctl: none of the usable flow formats (OpenFlow10,NXM) is among the allowed flow formats (OpenFlow11)
-])
-OVS_VSWITCHD_STOP
 AT_CLEANUP

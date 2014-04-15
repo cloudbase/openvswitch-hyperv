@@ -6,29 +6,6 @@ AT_CHECK([ovs-ofctl -vwarn probe br0])
 OVS_VSWITCHD_STOP
 AT_CLEANUP
 
-AT_SETUP([ofproto - handling messages with bad version])
-OVS_VSWITCHD_START
-
-# Start a monitor running OpenFlow 1.0, then send the switch an OF1.1 features
-# request
-AT_CHECK([ovs-ofctl -P openflow10 monitor br0 --detach --no-chdir --pidfile])
-ovs-appctl -t ovs-ofctl ofctl/set-output-file monitor.log
-AT_CAPTURE_FILE([monitor.log])
-ovs-appctl -t ovs-ofctl ofctl/send 0205000801234567
-ovs-appctl -t ovs-ofctl ofctl/barrier
-ovs-appctl -t ovs-ofctl exit
-
-AT_CHECK([sed 's/ (xid=0x[[0-9a-fA-F]]*)//
-/ECHO/d' monitor.log], [0], [dnl
-send: OFPT_FEATURES_REQUEST (OF1.1):
-OFPT_ERROR (OF1.1): OFPBRC_BAD_VERSION
-OFPT_FEATURES_REQUEST (OF1.1):
-OFPT_BARRIER_REPLY:
-])
-
-OVS_VSWITCHD_STOP(["/received OpenFlow version 0x02 != expected 01/d"])
-AT_CLEANUP
-
 AT_SETUP([ofproto - feature request, config request])
 OVS_VSWITCHD_START
 AT_CHECK([ovs-ofctl -vwarn show br0], [0], [stdout])
@@ -38,8 +15,8 @@ n_tables:254, n_buffers:256
 capabilities: FLOW_STATS TABLE_STATS PORT_STATS QUEUE_STATS ARP_MATCH_IP
 actions: OUTPUT SET_VLAN_VID SET_VLAN_PCP STRIP_VLAN SET_DL_SRC SET_DL_DST SET_NW_SRC SET_NW_DST SET_NW_TOS SET_TP_SRC SET_TP_DST ENQUEUE
  LOCAL(br0): addr:aa:55:aa:55:00:00
-     config:     PORT_DOWN
-     state:      LINK_DOWN
+     config:     0
+     state:      0
      speed: 0 Mbps now, 0 Mbps max
 OFPT_GET_CONFIG_REPLY: frags=normal miss_send_len=0
 ])
@@ -68,8 +45,8 @@ actions: OUTPUT SET_VLAN_VID SET_VLAN_PCP STRIP_VLAN SET_DL_SRC SET_DL_DST SET_N
      state:      LINK_DOWN
      speed: 0 Mbps now, 0 Mbps max
  LOCAL(br0): addr:aa:55:aa:55:00:0x
-     config:     PORT_DOWN
-     state:      LINK_DOWN
+     config:     0
+     state:      0
      speed: 0 Mbps now, 0 Mbps max
 OFPT_GET_CONFIG_REPLY: frags=normal miss_send_len=0
 ])
@@ -109,8 +86,8 @@ AT_CHECK([ovs-ofctl -vwarn dump-ports-desc br0], [0], [stdout])
 AT_CHECK([STRIP_XIDS stdout], [0], [dnl
 OFPST_PORT_DESC reply:
  LOCAL(br0): addr:aa:55:aa:55:00:00
-     config:     PORT_DOWN
-     state:      LINK_DOWN
+     config:     0
+     state:      0
      speed: 0 Mbps now, 0 Mbps max
 ])
 OVS_VSWITCHD_STOP
@@ -124,8 +101,8 @@ AT_CHECK([ovs-ofctl -O OpenFlow12 -vwarn dump-ports-desc br0], [0], [stdout])
 AT_CHECK([STRIP_XIDS stdout], [0], [dnl
 OFPST_PORT_DESC reply (OF1.2):
  LOCAL(br0): addr:aa:55:aa:55:00:00
-     config:     PORT_DOWN
-     state:      LINK_DOWN
+     config:     0
+     state:      0
      speed: 0 Mbps now, 0 Mbps max
 ])
 OVS_VSWITCHD_STOP
@@ -163,197 +140,6 @@ OFPST_QUEUE request (OF1.2) (xid=0x2):port=ANY queue=5
 AT_CHECK([ovs-ofctl -O OpenFlow12 -vwarn queue-stats br0 10], [0],
   [OFPT_ERROR (OF1.2) (xid=0x2): OFPQOFC_BAD_PORT
 OFPST_QUEUE request (OF1.2) (xid=0x2):port=10 queue=ALL
-])
-OVS_VSWITCHD_STOP
-AT_CLEANUP
-
-dnl This is really bare-bones.
-dnl It at least checks request and reply serialization and deserialization.
-AT_SETUP([ofproto - queue configuration - (OpenFlow 1.0)])
-OVS_VSWITCHD_START
-ADD_OF_PORTS([br0], [1], [2])
-AT_CHECK([ovs-ofctl queue-get-config br0 1], [0], [stdout])
-AT_CHECK([STRIP_XIDS stdout], [0], [dnl
-OFPT_QUEUE_GET_CONFIG_REPLY: port=1
-])
-AT_CHECK([ovs-ofctl queue-get-config br0 10], [0],
-  [OFPT_ERROR (xid=0x2): OFPQOFC_BAD_PORT
-OFPT_QUEUE_GET_CONFIG_REQUEST (xid=0x2): port=10
-])
-OVS_VSWITCHD_STOP
-AT_CLEANUP
-
-AT_SETUP([ofproto - queue configuration - (OpenFlow 1.2)])
-OVS_VSWITCHD_START
-ADD_OF_PORTS([br0], [1], [2])
-AT_CHECK([ovs-ofctl -O OpenFlow12 queue-get-config br0 1], [0], [stdout])
-AT_CHECK([STRIP_XIDS stdout], [0], [dnl
-OFPT_QUEUE_GET_CONFIG_REPLY (OF1.2): port=1
-])
-AT_CHECK([ovs-ofctl -O OpenFlow12 queue-get-config br0 10], [0],
-  [OFPT_ERROR (OF1.2) (xid=0x2): OFPQOFC_BAD_PORT
-OFPT_QUEUE_GET_CONFIG_REQUEST (OF1.2) (xid=0x2): port=10
-])
-OVS_VSWITCHD_STOP
-AT_CLEANUP
-
-dnl This is really bare-bones.
-dnl It at least checks request and reply serialization and deserialization.
-AT_SETUP([ofproto - del group])
-OVS_VSWITCHD_START
-AT_DATA([groups.txt], [dnl
-group_id=1234,type=all,bucket=output:10
-group_id=1235,type=all,bucket=output:10
-])
-AT_CHECK([ovs-ofctl -O OpenFlow11 -vwarn add-groups br0 groups.txt])
-AT_CHECK([ovs-ofctl -O OpenFlow11 -vwarn del-groups br0 group_id=1234])
-AT_CHECK([ovs-ofctl -O OpenFlow11 -vwarn dump-groups br0], [0], [stdout])
-AT_CHECK([STRIP_XIDS stdout], [0], [dnl
-OFPST_GROUP_DESC reply (OF1.1):
- group_id=1235,type=all,bucket=actions=output:10
-])
-AT_CHECK([ovs-ofctl -O OpenFlow11 -vwarn del-groups br0 group_id=1234])
-AT_CHECK([ovs-ofctl -O OpenFlow11 -vwarn dump-groups br0], [0], [stdout])
-AT_CHECK([STRIP_XIDS stdout], [0], [dnl
-OFPST_GROUP_DESC reply (OF1.1):
- group_id=1235,type=all,bucket=actions=output:10
-])
-AT_CHECK([ovs-ofctl -O OpenFlow11 -vwarn del-groups br0], [0])
-AT_CHECK([ovs-ofctl -O OpenFlow11 -vwarn dump-groups br0], [0], [stdout])
-AT_CHECK([STRIP_XIDS stdout], [0], [dnl
-OFPST_GROUP_DESC reply (OF1.1):
-])
-OVS_VSWITCHD_STOP
-AT_CLEANUP
-
-dnl This is really bare-bones.
-dnl It at least checks request and reply serialization and deserialization.
-AT_SETUP([ofproto - del group deletes flows])
-OVS_VSWITCHD_START
-AT_DATA([groups.txt], [dnl
-group_id=1234,type=all,bucket=output:10
-group_id=1235,type=all,bucket=output:10
-])
-AT_CHECK([ovs-ofctl -O OpenFlow11 -vwarn add-groups br0 groups.txt])
-AT_DATA([flows.txt], [dnl
-tcp actions=group:1234
-udp actions=group:1235
-])
-AT_CHECK([ovs-ofctl -O OpenFlow11 -vwarn add-flows br0 flows.txt])
-AT_CHECK([ovs-ofctl -O OpenFlow11 -vwarn dump-flows br0 | ofctl_strip | sort],
-[0], [dnl
- tcp actions=group:1234
- udp actions=group:1235
-OFPST_FLOW reply (OF1.1):
-])
-AT_CHECK([ovs-ofctl -O OpenFlow11 -vwarn del-groups br0 group_id=1234])
-AT_CHECK([ovs-ofctl -O OpenFlow11 -vwarn dump-flows br0 | ofctl_strip | sort],
-[0], [dnl
- udp actions=group:1235
-OFPST_FLOW reply (OF1.1):
-])
-AT_CHECK([ovs-ofctl -O OpenFlow11 -vwarn del-groups br0 group_id=1234])
-AT_CHECK([ovs-ofctl -O OpenFlow11 -vwarn dump-flows br0 | ofctl_strip | sort],
-[0], [dnl
- udp actions=group:1235
-OFPST_FLOW reply (OF1.1):
-])
-AT_CHECK([ovs-ofctl -O OpenFlow11 -vwarn del-groups br0])
-AT_CHECK([ovs-ofctl -O OpenFlow11 -vwarn dump-flows br0 | ofctl_strip | sort],
-[0], [dnl
-OFPST_FLOW reply (OF1.1):
-])
-OVS_VSWITCHD_STOP
-AT_CLEANUP
-
-dnl This is really bare-bones.
-dnl It at least checks request and reply serialization and deserialization.
-AT_SETUP([ofproto - flow mod checks group availability])
-OVS_VSWITCHD_START
-AT_CHECK([ovs-ofctl -O OpenFlow11 -vwarn add-group br0 group_id=1234,type=all,bucket=output:10])
-AT_DATA([flows.txt], [dnl
-tcp actions=group:1234
-udp actions=group:1235
-])
-AT_CHECK([ovs-ofctl -O OpenFlow11 -vwarn add-flow br0 'tcp actions=group:1234'])
-AT_CHECK([ovs-ofctl -O OpenFlow11 -vwarn add-flow br0 'tcp actions=group:1235'], [1], [], [stderr])
-
-# The output should look like this:
-#
-# 00000000  02 0e 00 98 00 00 00 02-00 00 00 00 00 00 00 00 |................|
-# 00000010  00 00 00 00 00 00 00 00-ff 00 00 00 00 00 80 00 |................|
-# 00000020  ff ff ff ff ff ff ff ff-ff ff ff ff 00 00 00 00 |................|
-# 00000030  00 00 00 58 00 00 00 00-00 00 03 d7 00 00 00 00 |...X............|
-#
-# This 'sed' command captures the error message but drops details.
-AT_CHECK([sed '/truncated/d
-/^000000.0/d' stderr | STRIP_XIDS], [0],
-  [OFPT_ERROR (OF1.1): OFPBAC_BAD_OUT_GROUP
-OFPT_FLOW_MOD (OF1.1):
-])
-OVS_VSWITCHD_STOP
-AT_CLEANUP
-
-dnl This is really bare-bones.
-dnl It at least checks request and reply serialization and deserialization.
-AT_SETUP([ofproto - group description])
-OVS_VSWITCHD_START
-AT_CHECK([ovs-ofctl -O OpenFlow11 -vwarn add-group br0 group_id=1234,type=all,bucket=output:10], [0], [stdout])
-AT_CHECK([ovs-ofctl -O OpenFlow11 -vwarn dump-groups br0], [0], [stdout])
-AT_CHECK([STRIP_XIDS stdout], [0], [dnl
-OFPST_GROUP_DESC reply (OF1.1):
- group_id=1234,type=all,bucket=actions=output:10
-])
-OVS_VSWITCHD_STOP
-AT_CLEANUP
-
-dnl This is really bare-bones.
-dnl It at least checks request and reply serialization and deserialization.
-AT_SETUP([ofproto - group description])
-OVS_VSWITCHD_START
-AT_CHECK([ovs-ofctl -O OpenFlow11 -vwarn add-group br0 group_id=1234,type=all,bucket=output:10])
-AT_CHECK([ovs-ofctl -O OpenFlow11 -vwarn dump-groups br0], [0], [stdout])
-AT_CHECK([STRIP_XIDS stdout], [0], [dnl
-OFPST_GROUP_DESC reply (OF1.1):
- group_id=1234,type=all,bucket=actions=output:10
-])
-OVS_VSWITCHD_STOP
-AT_CLEANUP
-
-dnl This is really bare-bones.
-dnl It at least checks request and reply serialization and deserialization.
-AT_SETUP([ofproto - group features])
-OVS_VSWITCHD_START
-AT_CHECK([ovs-ofctl -O OpenFlow12 -vwarn dump-group-features br0], [0], [stdout])
-AT_CHECK([STRIP_XIDS stdout], [0], [dnl
-OFPST_GROUP_FEATURES reply (OF1.2):
- Group table:
-    Types:  0x0
-    Capabilities:  0x7
-])
-OVS_VSWITCHD_STOP
-AT_CLEANUP
-
-dnl This is really bare-bones.
-dnl It at least checks request and reply serialization and deserialization.
-AT_SETUP([ofproto - group stats])
-OVS_VSWITCHD_START
-AT_DATA([groups.txt], [dnl
-group_id=1234,type=all,bucket=output:10
-group_id=1235,type=all,bucket=output:10
-])
-AT_CHECK([ovs-ofctl -O OpenFlow11 -vwarn add-groups br0 groups.txt])
-AT_CHECK([ovs-ofctl -O OpenFlow11 -vwarn add-flow br0 'tcp actions=group:1234'])
-AT_CHECK([ovs-ofctl -O OpenFlow11 -vwarn dump-group-stats br0 group_id=1234], [0], [stdout])
-AT_CHECK([STRIP_XIDS stdout | sort], [0], [dnl
- group_id=1234,ref_count=1,packet_count=0,byte_count=0,bucket0:packet_count=0,byte_count=0
-OFPST_GROUP reply (OF1.1):
-])
-AT_CHECK([ovs-ofctl -O OpenFlow11 -vwarn dump-group-stats br0], [0], [stdout])
-AT_CHECK([STRIP_XIDS stdout | sort], [0], [dnl
- group_id=1234,ref_count=1,packet_count=0,byte_count=0,bucket0:packet_count=0,byte_count=0
- group_id=1235,ref_count=0,packet_count=0,byte_count=0,bucket0:packet_count=0,byte_count=0
-OFPST_GROUP reply (OF1.1):
 ])
 OVS_VSWITCHD_STOP
 AT_CLEANUP
@@ -467,43 +253,6 @@ AT_CHECK([ovs-ofctl -F openflow10 dump-flows br0 | ofctl_strip], [0], [OFPST_FLO
 OVS_VSWITCHD_STOP
 AT_CLEANUP
 
-AT_SETUP([ofproto - basic flow_mod commands (OpenFlow 1.1)])
-OVS_VSWITCHD_START
-AT_CHECK([ovs-ofctl -O OpenFlow11 dump-flows br0 | ofctl_strip], [0], [OFPST_FLOW reply (OF1.1):
-])
-AT_CHECK([echo 'in_port=2,actions=1' | ovs-ofctl -O OpenFlow11 add-flows br0 -])
-AT_CHECK([ovs-ofctl -O OpenFlow11 add-flow br0 in_port=1,actions=2])
-AT_CHECK([ovs-ofctl -O OpenFlow11 add-flow br0 table=1,in_port=4,actions=3])
-AT_CHECK([ovs-ofctl -O OpenFlow11 dump-flows br0 | ofctl_strip | sort], [0], [dnl
- in_port=1 actions=output:2
- in_port=2 actions=output:1
- table=1, in_port=4 actions=output:3
-OFPST_FLOW reply (OF1.1):
-])
-AT_CHECK([ovs-ofctl -O OpenFlow11 dump-aggregate br0 table=0 | STRIP_XIDS], [0], [dnl
-OFPST_AGGREGATE reply (OF1.1): packet_count=0 byte_count=0 flow_count=2
-])
-AT_CHECK([ovs-ofctl -O OpenFlow11 del-flows br0])
-AT_CHECK([ovs-ofctl -O OpenFlow11 dump-flows br0 | ofctl_strip], [0], [OFPST_FLOW reply (OF1.1):
- table=1, in_port=4 actions=output:3
-])
-OVS_VSWITCHD_STOP
-AT_CLEANUP
-
-AT_SETUP([ofproto - flow_mod negative test (OpenFlow 1.1)])
-OVS_VSWITCHD_START(
-  [set bridge br0 protocols=OpenFlow10,OpenFlow11,OpenFlow12,OpenFlow13])
-AT_CHECK([ovs-ofctl add-flow -O OpenFlow11 br0 table=1,action=goto_table:2])
-
-# The error message here actually comes from ovs-ofctl, not from ovs-vswitchd,
-# but at least it's the same code in ofpacts_check() that issues the error.
-AT_CHECK([ovs-ofctl add-flow -O OpenFlow11 br0 table=1,action=goto_table:1],
-  [1], [],
-  [ovs-ofctl: actions are invalid with specified match (OFPBRC_BAD_TABLE_ID)
-])
-OVS_VSWITCHD_STOP
-AT_CLEANUP
-
 AT_SETUP([ofproto - set-field flow_mod commands (NXM)])
 OVS_VSWITCHD_START
 AT_CHECK([ovs-ofctl add-flow br0 ipv6,table=1,in_port=3,actions=drop])
@@ -590,23 +339,8 @@ NXST_FLOW reply:
 OVS_VSWITCHD_STOP
 AT_CLEANUP
 
-AT_SETUP([ofproto - no mod flow with cookie change (OpenFlow 1.1)])
-OVS_VSWITCHD_START
-AT_CHECK([ovs-ofctl -O OpenFlow11 add-flow br0 cookie=0x1,in_port=1,actions=1])
-AT_CHECK([ovs-ofctl -O OpenFlow11 dump-flows br0 | ofctl_strip | sort], [0], [dnl
- cookie=0x1, in_port=1 actions=output:1
-OFPST_FLOW reply (OF1.1):
-])
-AT_CHECK([ovs-ofctl -O OpenFlow11 mod-flows br0 cookie=0x2,in_port=1,actions=1])
-AT_CHECK([ovs-ofctl -O OpenFlow11 dump-flows br0 | ofctl_strip | sort], [0], [dnl
- cookie=0x1, in_port=1 actions=output:1
-OFPST_FLOW reply (OF1.1):
-])
-OVS_VSWITCHD_STOP
-AT_CLEANUP
-
 dnl The OpenFlow 1.2 spec states that the cookie may not be modified
-AT_SETUP([ofproto - no mod flow with cookie change (OpenFlow 1.2)])
+AT_SETUP([ofproto - no mod flow with cookie change (OpenFlow1.2)])
 OVS_VSWITCHD_START
 AT_CHECK([ovs-ofctl -O OpenFlow12 add-flow br0 cookie=0x1,in_port=1,actions=1])
 AT_CHECK([ovs-ofctl -O OpenFlow12 dump-flows br0 | ofctl_strip | sort], [0], [dnl
@@ -640,28 +374,6 @@ AT_CHECK([ovs-ofctl -F nxm dump-flows br0 | ofctl_strip | sort], [0], [dnl
  cookie=0x1, in_port=2 actions=output:4
  cookie=0x2, in_port=3 actions=output:1
 NXST_FLOW reply:
-])
-OVS_VSWITCHD_STOP
-AT_CLEANUP
-
-AT_SETUP([ofproto - mod flows based on cookie mask (OpenFlow 1.1)])
-OVS_VSWITCHD_START
-AT_CHECK([ovs-ofctl -O OpenFlow11 add-flow br0 cookie=0x1,in_port=1,actions=1])
-AT_CHECK([ovs-ofctl -O OpenFlow11 add-flow br0 cookie=0x1,in_port=2,actions=1])
-AT_CHECK([ovs-ofctl -O OpenFlow11 add-flow br0 cookie=0x2,in_port=3,actions=1])
-AT_CHECK([ovs-ofctl -O OpenFlow11 dump-flows br0 | ofctl_strip | sort], [0], [dnl
- cookie=0x1, in_port=1 actions=output:1
- cookie=0x1, in_port=2 actions=output:1
- cookie=0x2, in_port=3 actions=output:1
-OFPST_FLOW reply (OF1.1):
-])
-
-AT_CHECK([ovs-ofctl -O OpenFlow11 mod-flows br0 cookie=0x1/0xff,actions=4])
-AT_CHECK([ovs-ofctl -O OpenFlow11 dump-flows br0 | ofctl_strip | sort], [0], [dnl
- cookie=0x1, in_port=1 actions=output:4
- cookie=0x1, in_port=2 actions=output:4
- cookie=0x2, in_port=3 actions=output:1
-OFPST_FLOW reply (OF1.1):
 ])
 OVS_VSWITCHD_STOP
 AT_CLEANUP
@@ -711,7 +423,7 @@ NXST_FLOW reply:
 OVS_VSWITCHD_STOP
 AT_CLEANUP
 
-AT_SETUP([ofproto - mod flow with cookie miss (mask==0) - NXM])
+AT_SETUP([ofproto - mod flow with cookie miss (mask==0)])
 OVS_VSWITCHD_START
 AT_CHECK([ovs-ofctl -F nxm mod-flows br0 in_port=1,actions=1])
 AT_CHECK([ovs-ofctl -F nxm dump-flows br0 | ofctl_strip | sort], [0], [dnl
@@ -721,48 +433,11 @@ NXST_FLOW reply:
 OVS_VSWITCHD_STOP
 AT_CLEANUP
 
-AT_SETUP([ofproto - mod flow with cookie miss (mask==0) - OF1.1])
-OVS_VSWITCHD_START
-AT_CHECK([ovs-ofctl -O openflow11 mod-flows br0 in_port=1,actions=1])
-AT_CHECK([ovs-ofctl -O openflow11 dump-flows br0 | ofctl_strip | sort], [0], [dnl
- in_port=1 actions=output:1
-OFPST_FLOW reply (OF1.1):
-])
-OVS_VSWITCHD_STOP
-AT_CLEANUP
-
-AT_SETUP([ofproto - mod flow with cookie miss (mask==0) - OF1.2])
-OVS_VSWITCHD_START
-AT_CHECK([ovs-ofctl -O openflow12 mod-flows br0 in_port=1,actions=1])
-AT_CHECK([ovs-ofctl -O openflow12 dump-flows br0 | ofctl_strip | sort], [0], [dnl
-OFPST_FLOW reply (OF1.2):
-])
-OVS_VSWITCHD_STOP
-AT_CLEANUP
-
-AT_SETUP([ofproto - mod flow with cookie miss (mask!=0) - NXM])
+AT_SETUP([ofproto - mod flow with cookie miss (mask!=0)])
 OVS_VSWITCHD_START
 AT_CHECK([ovs-ofctl -F nxm mod-flows br0 cookie=1/1,in_port=1,actions=1])
 AT_CHECK([ovs-ofctl -F nxm dump-flows br0 | ofctl_strip | sort], [0], [dnl
 NXST_FLOW reply:
-])
-OVS_VSWITCHD_STOP
-AT_CLEANUP
-
-AT_SETUP([ofproto - mod flow with cookie miss (mask!=0) - OF1.1])
-OVS_VSWITCHD_START
-AT_CHECK([ovs-ofctl -O openflow11 mod-flows br0 cookie=1/1,in_port=1,actions=1])
-AT_CHECK([ovs-ofctl -O openflow11 dump-flows br0 | ofctl_strip | sort], [0], [dnl
-OFPST_FLOW reply (OF1.1):
-])
-OVS_VSWITCHD_STOP
-AT_CLEANUP
-
-AT_SETUP([ofproto - mod flow with cookie miss (mask!=0) - OF1.2])
-OVS_VSWITCHD_START
-AT_CHECK([ovs-ofctl -O openflow12 mod-flows br0 cookie=1/1,in_port=1,actions=1])
-AT_CHECK([ovs-ofctl -O openflow12 dump-flows br0 | ofctl_strip | sort], [0], [dnl
-OFPST_FLOW reply (OF1.2):
 ])
 OVS_VSWITCHD_STOP
 AT_CLEANUP
@@ -858,39 +533,6 @@ NXST_FLOW reply:
 OVS_VSWITCHD_STOP
 AT_CLEANUP
 
-AT_SETUP([ofproto - del flows based on table id (OpenFlow 1.1)])
-OVS_VSWITCHD_START
-AT_CHECK([ovs-ofctl -O OpenFlow11 add-flow br0 cookie=0x1,in_port=1,actions=1])
-AT_CHECK([ovs-ofctl -O OpenFlow11 add-flow br0 cookie=0x2,in_port=2,table=1,actions=1])
-AT_CHECK([ovs-ofctl -O OpenFlow11 dump-flows br0 | ofctl_strip | sort], [0], [dnl
- cookie=0x1, in_port=1 actions=output:1
- cookie=0x2, table=1, in_port=2 actions=output:1
-OFPST_FLOW reply (OF1.1):
-])
-AT_CHECK([ovs-ofctl -O OpenFlow11 del-flows br0 table=0])
-AT_CHECK([ovs-ofctl -O OpenFlow11 dump-flows br0 | ofctl_strip | sort], [0], [dnl
- cookie=0x2, table=1, in_port=2 actions=output:1
-OFPST_FLOW reply (OF1.1):
-])
-AT_CHECK([ovs-ofctl -O OpenFlow11 del-flows br0 table=1])
-AT_CHECK([ovs-ofctl -O OpenFlow11 dump-flows br0 | ofctl_strip | sort], [0], [dnl
-OFPST_FLOW reply (OF1.1):
-])
-AT_CHECK([ovs-ofctl -O OpenFlow11 add-flow br0 cookie=0x1,in_port=1,actions=1])
-AT_CHECK([ovs-ofctl -O OpenFlow11 add-flow br0 cookie=0x2,in_port=2,table=1,actions=1])
-AT_CHECK([ovs-ofctl -O OpenFlow11 dump-flows br0 | ofctl_strip | sort], [0], [dnl
- cookie=0x1, in_port=1 actions=output:1
- cookie=0x2, table=1, in_port=2 actions=output:1
-OFPST_FLOW reply (OF1.1):
-])
-AT_CHECK([ovs-ofctl -O OpenFlow11 del-flows br0])
-AT_CHECK([ovs-ofctl -O OpenFlow11 dump-flows br0 | ofctl_strip], [0], [dnl
-OFPST_FLOW reply (OF1.1):
- cookie=0x2, table=1, in_port=2 actions=output:1
-])
-OVS_VSWITCHD_STOP
-AT_CLEANUP
-
 AT_SETUP([ofproto - del flows based on table id (OpenFlow 1.2)])
 OVS_VSWITCHD_START
 AT_CHECK([ovs-ofctl -O OpenFlow12 add-flow br0 cookie=0x1,in_port=1,actions=1])
@@ -962,13 +604,13 @@ AT_CLEANUP
 AT_SETUP([ofproto - flow table configuration (OpenFlow 1.2)])
 OVS_VSWITCHD_START
 # Check the default configuration.
-(mid="wild=0xfffffffff, max=1000000,"
+(mid="wild=0xffffffffff, max=1000000,"
  tail="
                lookup=0, matched=0
-               match=0xfffffffff, instructions=0x00000007, config=0x00000003
+               match=0xffffffffff, instructions=0x00000007, config=0x00000003
                write_actions=0x00000000, apply_actions=0x00000000
-               write_setfields=0x0000000fffffffff
-               apply_setfields=0x0000000fffffffff
+               write_setfields=0x000000ffffffffff
+               apply_setfields=0x000000ffffffffff
                metadata_match=0xffffffffffffffff
                metadata_write=0xffffffffffffffff"
  echo "OFPST_TABLE reply (OF1.2) (xid=0x2): 254 tables
@@ -993,15 +635,15 @@ AT_CHECK(
 # Check that the configuration was updated.
 mv expout orig-expout
 (echo "OFPST_TABLE reply (OF1.2) (xid=0x2): 254 tables
-  0: main    : wild=0xfffffffff, max=1000000, active=0"
+  0: main    : wild=0xffffffffff, max=1000000, active=0"
  tail -n +3 orig-expout | head -7
- echo "  1: table1  : wild=0xfffffffff, max=  1024, active=0"
+ echo "  1: table1  : wild=0xffffffffff, max=  1024, active=0"
  tail -n +11 orig-expout) > expout
 AT_CHECK([ovs-ofctl -O OpenFlow12 dump-tables br0], [0], [expout])
 OVS_VSWITCHD_STOP
 AT_CLEANUP
 
-AT_SETUP([ofproto - hard limits on flow table size (OpenFlow 1.0)])
+AT_SETUP([ofproto - hard limits on flow table size (OpenFLow 1.0)])
 OVS_VSWITCHD_START
 # Configure a maximum of 4 flows.
 AT_CHECK(
@@ -1045,7 +687,7 @@ NXST_FLOW reply:
 OVS_VSWITCHD_STOP
 AT_CLEANUP
 
-AT_SETUP([ofproto - hard limits on flow table size (OpenFlow 1.2)])
+AT_SETUP([ofproto - hard limits on flow table size (OpenFLow 1.2)])
 OVS_VSWITCHD_START
 # Configure a maximum of 4 flows.
 AT_CHECK(
@@ -1361,94 +1003,6 @@ AT_CHECK([ovs-ofctl -O OpenFlow12 dump-flows br0 | ofctl_strip | sort], [0], [dn
  idle_timeout=80, in_port=2,dl_src=00:99:aa:bb:cc:dd actions=drop
  in_port=2,dl_src=00:55:66:77:88:99 actions=drop
 OFPST_FLOW reply (OF1.2):
-])
-OVS_VSWITCHD_STOP
-AT_CLEANUP
-
-AT_SETUP([ofproto - eviction upon table overflow, with modified hard timeout])
-OVS_VSWITCHD_START
-# Configure a maximum of 4 flows.
-AT_CHECK(
-  [ovs-vsctl \
-     -- --id=@t0 create Flow_Table flow-limit=4 overflow-policy=evict \
-     -- set bridge br0 flow_tables:0=@t0 \
-   | ${PERL} $srcdir/uuidfilt.pl],
-  [0], [<0>
-])
-ovs-appctl time/stop
-# Add 4 flows.
-for in_port in 4 3 2 1; do
-    ovs-ofctl add-flow br0 hard_timeout=$((10 + in_port * 3)),in_port=$in_port,actions=drop
-done
-AT_CHECK([ovs-ofctl dump-flows br0 | ofctl_strip | sort], [0], [dnl
- hard_timeout=13, in_port=1 actions=drop
- hard_timeout=16, in_port=2 actions=drop
- hard_timeout=19, in_port=3 actions=drop
- hard_timeout=22, in_port=4 actions=drop
-NXST_FLOW reply:
-])
-# Sleep and modify the one that expires soonest
-ovs-appctl time/warp 5000
-AT_CHECK([ovs-ofctl mod-flows br0 in_port=1,actions=drop])
-# At this point the table would looks like:
-#  in_port   seconds to expire
-#     1            13
-#     2            11
-#     3            14
-#     4            17
-ovs-appctl time/warp 2000
-# Adding another flow will cause the one that expires soonest to be evicted.
-AT_CHECK([ovs-ofctl add-flow br0 in_port=5,actions=drop])
-AT_CHECK([ovs-ofctl dump-flows br0 | ofctl_strip | sort], [0], [dnl
- hard_timeout=13, in_port=1 actions=drop
- hard_timeout=19, in_port=3 actions=drop
- hard_timeout=22, in_port=4 actions=drop
- in_port=5 actions=drop
-NXST_FLOW reply:
-])
-OVS_VSWITCHD_STOP
-AT_CLEANUP
-
-AT_SETUP([ofproto - eviction upon table overflow, with modified idle timeout])
-OVS_VSWITCHD_START([add-port br0 p1 -- set interface p1 type=dummy ofport_request=1])
-# Configure a maximum of 4 flows.
-AT_CHECK(
-  [ovs-vsctl \
-     -- --id=@t0 create Flow_Table flow-limit=4 overflow-policy=evict \
-     -- set bridge br0 flow_tables:0=@t0 \
-   | ${PERL} $srcdir/uuidfilt.pl],
-  [0], [<0>
-])
-# Add 4 flows.
-for in_port in 4 3 2 1; do
-    ovs-ofctl add-flow br0 idle_timeout=$((10 + in_port * 3)),in_port=$in_port,actions=drop
-done
-ovs-appctl time/stop
-AT_CHECK([ovs-ofctl dump-flows br0 | ofctl_strip | sort], [0], [dnl
- idle_timeout=13, in_port=1 actions=drop
- idle_timeout=16, in_port=2 actions=drop
- idle_timeout=19, in_port=3 actions=drop
- idle_timeout=22, in_port=4 actions=drop
-NXST_FLOW reply:
-])
-# Sleep and receive on the flow that expires soonest
-ovs-appctl time/warp 5000
-AT_CHECK([ovs-appctl netdev-dummy/receive p1 'in_port(1)'])
-# At this point the table would looks like:
-#  in_port   seconds to expire
-#     1            13
-#     2            11
-#     3            14
-#     4            17
-ovs-appctl time/warp 2000
-# Adding another flow will cause the one that expires soonest to be evicted.
-AT_CHECK([ovs-ofctl add-flow br0 in_port=5,actions=drop])
-AT_CHECK([ovs-ofctl dump-flows br0 | ofctl_strip | sort], [0], [dnl
- idle_timeout=19, in_port=3 actions=drop
- idle_timeout=22, in_port=4 actions=drop
- in_port=5 actions=drop
- n_packets=1, n_bytes=60, idle_timeout=13, in_port=1 actions=drop
-NXST_FLOW reply:
 ])
 OVS_VSWITCHD_STOP
 AT_CLEANUP
@@ -1769,34 +1323,31 @@ AT_CHECK([ovs-ofctl -O OpenFlow12 monitor br0 --detach --no-chdir --pidfile])
 ovs-appctl -t ovs-ofctl ofctl/barrier
 ovs-appctl -t ovs-ofctl ofctl/set-output-file monitor.log
 : > expout
-: > experr
 
 # find out current role
 ovs-appctl -t ovs-ofctl ofctl/send 031800180000000200000000000000000000000000000000
-echo >>experr "send: OFPT_ROLE_REQUEST (OF1.2) (xid=0x2): role=nochange"
+echo >>expout "send: OFPT_ROLE_REQUEST (OF1.2) (xid=0x2): role=nochange"
 echo >>expout "OFPT_ROLE_REPLY (OF1.2) (xid=0x2): role=equal"
 
 # Become slave (generation_id is initially undefined, so 2^63+2 should not be stale)
 ovs-appctl -t ovs-ofctl ofctl/send 031800180000000300000003000000008000000000000002
-echo >>experr "send: OFPT_ROLE_REQUEST (OF1.2) (xid=0x3): role=slave generation_id=9223372036854775810"
+echo >>expout "send: OFPT_ROLE_REQUEST (OF1.2) (xid=0x3): role=slave generation_id=9223372036854775810"
 echo >>expout "OFPT_ROLE_REPLY (OF1.2) (xid=0x3): role=slave generation_id=9223372036854775810"
 
 # Try to become the master using a stale generation ID
 ovs-appctl -t ovs-ofctl ofctl/send 031800180000000400000002000000000000000000000002
-echo >>experr "send: OFPT_ROLE_REQUEST (OF1.2) (xid=0x4): role=master generation_id=2"
+echo >>expout "send: OFPT_ROLE_REQUEST (OF1.2) (xid=0x4): role=master generation_id=2"
 echo >>expout "OFPT_ERROR (OF1.2) (xid=0x4): OFPRRFC_STALE"
 echo >>expout "OFPT_ROLE_REQUEST (OF1.2) (xid=0x4): role=master generation_id=2"
 
 # Become master using a valid generation ID
 ovs-appctl -t ovs-ofctl ofctl/send 031800180000000500000002000000000000000000000001
-echo >>experr "send: OFPT_ROLE_REQUEST (OF1.2) (xid=0x5): role=master generation_id=1"
+echo >>expout "send: OFPT_ROLE_REQUEST (OF1.2) (xid=0x5): role=master generation_id=1"
 echo >>expout "OFPT_ROLE_REPLY (OF1.2) (xid=0x5): role=master generation_id=1"
 ovs-appctl -t ovs-ofctl ofctl/barrier
 echo >>expout "OFPT_BARRIER_REPLY (OF1.2) (xid=0x3):"
 
-AT_CHECK([grep -v '^send:' monitor.log], [0], [expout])
-mv experr expout
-AT_CHECK([grep '^send:' monitor.log], [0], [expout])
+AT_CHECK([cat monitor.log], [0], [expout])
 
 ovs-appctl -t ovs-ofctl exit
 OVS_VSWITCHD_STOP
@@ -1808,7 +1359,6 @@ dnl controllers despite the spec) as meaning a packet that was generated
 dnl by the controller.
 AT_SETUP([ofproto - packet-out from controller (OpenFlow 1.0)])
 OVS_VSWITCHD_START
-ADD_OF_PORTS([br0], [1])
 
 # Start a monitor listening for packet-ins.
 AT_CHECK([ovs-ofctl -P openflow10 monitor br0 --detach --no-chdir --pidfile])
@@ -1818,14 +1368,12 @@ ovs-appctl -t ovs-ofctl ofctl/set-output-file monitor.log
 AT_CAPTURE_FILE([monitor.log])
 
 # Send some packet-outs with OFPP_NONE and OFPP_CONTROLLER (65533) as in_port.
-AT_CHECK([ovs-ofctl packet-out br0 none controller,1 '0001020304050010203040501234'])
-AT_CHECK([ovs-ofctl packet-out br0 controller controller,1 '0001020304050010203040505678'])
+AT_CHECK([ovs-ofctl packet-out br0 none controller '0001020304050010203040501234'])
+AT_CHECK([ovs-ofctl packet-out br0 controller controller '0001020304050010203040505678'])
 
 # Stop the monitor and check its output.
 ovs-appctl -t ovs-ofctl ofctl/barrier
 ovs-appctl -t ovs-ofctl exit
-
-ovs-ofctl dump-ports br0
 
 AT_CHECK([sed 's/ (xid=0x[[0-9a-fA-F]]*)//' monitor.log], [0], [dnl
 OFPT_PACKET_IN: total_len=14 in_port=ANY (via action) data_len=14 (unbuffered)
@@ -1871,39 +1419,6 @@ OFPT_BARRIER_REPLY (OF1.2):
 OVS_VSWITCHD_STOP
 AT_CLEANUP
 
-dnl This test checks that OFPT_PACKET_OUT accepts both OFPP_NONE (as
-dnl specified by OpenFlow 1.1) and OFPP_CONTROLLER (used by some
-dnl controllers despite the spec) as meaning a packet that was generated
-dnl by the controller.
-AT_SETUP([ofproto - packet-out from controller (OpenFlow 1.1)])
-OVS_VSWITCHD_START
-
-# Start a monitor listening for packet-ins.
-AT_CHECK([ovs-ofctl -O OpenFlow11 monitor br0 --detach --no-chdir --pidfile])
-ovs-appctl -t ovs-ofctl ofctl/send 0209000c0123456700000080
-ovs-appctl -t ovs-ofctl ofctl/barrier
-ovs-appctl -t ovs-ofctl ofctl/set-output-file monitor.log
-AT_CAPTURE_FILE([monitor.log])
-
-# Send some packet-outs with OFPP_NONE and OFPP_CONTROLLER (65533) as in_port.
-AT_CHECK([ovs-ofctl -O OpenFlow11 packet-out br0 none controller '0001020304050010203040501234'])
-AT_CHECK([ovs-ofctl -O OpenFlow11 packet-out br0 4294967293 controller '0001020304050010203040505678'])
-
-# Stop the monitor and check its output.
-ovs-appctl -t ovs-ofctl ofctl/barrier
-ovs-appctl -t ovs-ofctl exit
-
-AT_CHECK([sed 's/ (xid=0x[[0-9a-fA-F]]*)//' monitor.log], [0], [dnl
-OFPT_PACKET_IN (OF1.1): total_len=14 in_port=ANY (via action) data_len=14 (unbuffered)
-metadata=0,in_port=0,vlan_tci=0x0000,dl_src=00:10:20:30:40:50,dl_dst=00:01:02:03:04:05,dl_type=0x1234
-OFPT_PACKET_IN (OF1.1): total_len=14 in_port=CONTROLLER (via action) data_len=14 (unbuffered)
-metadata=0,in_port=0,vlan_tci=0x0000,dl_src=00:10:20:30:40:50,dl_dst=00:01:02:03:04:05,dl_type=0x5678
-OFPT_BARRIER_REPLY (OF1.1):
-])
-
-OVS_VSWITCHD_STOP
-AT_CLEANUP
-
 dnl This test checks that metadata is encoded in packet_in structures,
 dnl supported by NXAST.
 AT_SETUP([ofproto - packet-out with metadata (NXM)])
@@ -1917,14 +1432,14 @@ ovs-appctl -t ovs-ofctl ofctl/set-output-file monitor.log
 AT_CAPTURE_FILE([monitor.log])
 
 # Send a packet-out with a load action to set some metadata, and forward to controller
-AT_CHECK([ovs-ofctl packet-out br0 controller 'load(0xfafafafa5a5a5a5a->OXM_OF_METADATA[[0..63]]), load(0xaa->NXM_NX_PKT_MARK[[]]), controller' '0001020304050010203040501234'])
+AT_CHECK([ovs-ofctl packet-out br0 controller 'load(0xfafafafa5a5a5a5a->OXM_OF_METADATA[[0..63]]), controller' '0001020304050010203040501234'])
 
 # Stop the monitor and check its output.
 ovs-appctl -t ovs-ofctl ofctl/barrier
 ovs-appctl -t ovs-ofctl exit
 
 AT_CHECK([sed 's/ (xid=0x[[0-9a-fA-F]]*)//' monitor.log], [0], [dnl
-NXT_PACKET_IN: total_len=14 in_port=CONTROLLER metadata=0xfafafafa5a5a5a5a pkt_mark=0xaa (via action) data_len=14 (unbuffered)
+NXT_PACKET_IN: total_len=14 in_port=CONTROLLER metadata=0xfafafafa5a5a5a5a (via action) data_len=14 (unbuffered)
 metadata=0,in_port=0,vlan_tci=0x0000,dl_src=00:10:20:30:40:50,dl_dst=00:01:02:03:04:05,dl_type=0x1234
 OFPT_BARRIER_REPLY:
 ])
@@ -1953,33 +1468,6 @@ ovs-appctl -t ovs-ofctl exit
 
 AT_CHECK([sed 's/ (xid=0x[[0-9a-fA-F]]*)//' monitor.log], [0], [dnl
 OFPT_PACKET_IN (OF1.2): total_len=14 in_port=ANY metadata=0xfafafafa5a5a5a5a (via action) data_len=14 (unbuffered)
-metadata=0,in_port=0,vlan_tci=0x0000,dl_src=00:10:20:30:40:50,dl_dst=00:01:02:03:04:05,dl_type=0x1234
-OFPT_BARRIER_REPLY (OF1.2):
-])
-
-OVS_VSWITCHD_STOP
-AT_CLEANUP
-
-dnl This test checks that tunnel metadata is encoded in packet_in structures.
-AT_SETUP([ofproto - packet-out with tunnel metadata (OpenFlow 1.2)])
-OVS_VSWITCHD_START
-
-# Start a monitor listening for packet-ins.
-AT_CHECK([ovs-ofctl -O OpenFlow12 monitor br0 --detach --no-chdir --pidfile])
-ovs-appctl -t ovs-ofctl ofctl/send 0309000c0123456700000080
-ovs-appctl -t ovs-ofctl ofctl/barrier
-ovs-appctl -t ovs-ofctl ofctl/set-output-file monitor.log
-AT_CAPTURE_FILE([monitor.log])
-
-# Send a packet-out with set field actions to set some tunnel metadata, and forward to controller
-AT_CHECK([ovs-ofctl -O OpenFlow12 packet-out br0 none 'set_field:127.0.0.1->tun_src,set_field:0x01020304->tun_id,set_field:192.168.0.1->tun_dst, controller' '0001020304050010203040501234'])
-
-# Stop the monitor and check its output.
-ovs-appctl -t ovs-ofctl ofctl/barrier
-ovs-appctl -t ovs-ofctl exit
-
-AT_CHECK([sed 's/ (xid=0x[[0-9a-fA-F]]*)//' monitor.log], [0], [dnl
-OFPT_PACKET_IN (OF1.2): total_len=14 in_port=ANY tun_id=0x1020304 tun_src=127.0.0.1 tun_dst=192.168.0.1 (via action) data_len=14 (unbuffered)
 metadata=0,in_port=0,vlan_tci=0x0000,dl_src=00:10:20:30:40:50,dl_dst=00:01:02:03:04:05,dl_type=0x1234
 OFPT_BARRIER_REPLY (OF1.2):
 ])
@@ -2144,7 +1632,7 @@ if test -e /proc/sys/net/core/rmem_max; then
     # Linux
     rmem_max=`cat /proc/sys/net/core/rmem_max`
 elif rmem_max=`sysctl -n net.inet.tcp.recvbuf_max 2>/dev/null`; then
-    : # FreeBSD, NetBSD
+    : # FreeBSD
 else
     # Don't know how to get maximum socket receive buffer on this OS
     AT_SKIP_IF([:])
@@ -2153,9 +1641,6 @@ fi
 # in ofproto sending userspace (see ofmonitor_flush() in connmgr.c).
 queue_size=`expr $rmem_max + 128 \* 1024`
 echo rmem_max=$rmem_max queue_size=$queue_size
-
-# If there's too much queuing skip the test to avoid timing out.
-AT_SKIP_IF([test $rmem_max -gt 1048576])
 
 # Each flow update message takes up at least 48 bytes of space in queues
 # and in practice more than that.
@@ -2185,12 +1670,7 @@ AT_CHECK([ovs-ofctl mod-flows br0 in_port=2,cookie=2,actions=output:2])
 AT_CHECK([ovs-ofctl del-flows br0 cookie=1/-1])
 
 ovs-appctl -t ovs-ofctl ofctl/unblock
-
-# Wait for the connection resumed.
-# A barrier doesn't work for this purpose.
-#    https://www.mail-archive.com/dev@openvswitch.org/msg27013.html
-#    https://www.mail-archive.com/dev@openvswitch.org/msg27675.html
-OVS_WAIT_UNTIL([grep NXT_FLOW_MONITOR_RESUMED monitor.log])
+ovs-appctl -t ovs-ofctl ofctl/barrier
 
 ovs-appctl -t ovs-ofctl exit
 
@@ -2238,94 +1718,5 @@ NXT_FLOW_MONITOR_PAUSED:
 NXT_FLOW_MONITOR_RESUMED:
 ])
 
-OVS_VSWITCHD_STOP
-AT_CLEANUP
-
-AT_SETUP([ofproto - event filtering (OpenFlow 1.3)])
-AT_KEYWORDS([monitor])
-OVS_VSWITCHD_START
-
-# Start a monitor, use the required protocol version
-ovs-ofctl -O OpenFlow13 monitor br0 --detach --no-chdir --pidfile >monitor.log 2>&1
-AT_CAPTURE_FILE([monitor.log])
-
-# Send an OpenFlow13 message (04), OFPT_GET_ASYNC_REQUEST (1a), length (8), xid (0a)
-ovs-appctl -t ovs-ofctl ofctl/send 041a00080000000a
-ovs-appctl -t ovs-ofctl ofctl/barrier
-
-# Check default setting
-read -r -d '' expected <<'EOF'
-EOF
-
-AT_CHECK([ofctl_strip < monitor.log], [], [dnl
-send: OFPT_GET_ASYNC_REQUEST (OF1.3):
-OFPT_GET_ASYNC_REPLY (OF1.3):
- master:
-       PACKET_IN: no_match action
-     PORT_STATUS: add delete modify
-    FLOW_REMOVED: idle hard delete
-
- slave:
-       PACKET_IN: (off)
-     PORT_STATUS: add delete modify
-    FLOW_REMOVED: (off)
-OFPT_BARRIER_REPLY (OF1.3):
-])
-
-OVS_VSWITCHD_STOP
-AT_CLEANUP
-
-AT_SETUP([ofproto - ofport_request])
-OVS_VSWITCHD_START
-ADD_OF_PORTS([br0], [1], [2], [3])
-
-set_and_check_specific_ofports () {
-    ovs-vsctl set Interface p1 ofport_request="$1" -- \
-	      set Interface p2 ofport_request="$2" -- \
-	      set Interface p3 ofport_request="$3"
-    ofports=`ovs-vsctl get Interface p1 ofport -- \
-		       get Interface p2 ofport -- \
-		       get Interface p3 ofport`
-    AT_CHECK_UNQUOTED([echo $ofports], [0], [$1 $2 $3
-])
-}
-for pre in      '1 2 3' '1 3 2' '2 1 3' '2 3 1' '3 1 2' '3 2 1'; do
-    for post in '1 2 3' '1 3 2' '2 1 3' '2 3 1' '3 1 2' '3 2 1'; do
-        echo -----------------------------------------------------------
-        echo "Check changing port numbers from $pre to $post"
-	set_and_check_ofports $pre
-	set_and_check_ofports $post
-    done
-done
-
-ovs-vsctl del-port p3
-
-set_and_check_poorly_specified_ofports () {
-    ovs-vsctl set Interface p1 ofport_request="$1" -- \
-	      set Interface p2 ofport_request="$2"
-    p1=`ovs-vsctl get Interface p1 ofport`
-    p2=`ovs-vsctl get Interface p2 ofport`
-    echo $p1 $p2
-
-    AT_CHECK([test "$p1" != "$p2"])
-    if test "$1" = "$2" && test "$1" != '[[]]'; then
-        # One port number must be the requested one.
-	AT_CHECK([test "$p1" = "$1" || test "$p2" = "$1"])
-	# The other port number must be different (already tested above).
-    else
-        AT_CHECK([test "$1" = '[[]]' || test "$p1" == "$1"])
-        AT_CHECK([test "$2" = '[[]]' || test "$p2" == "$2"])
-    fi
-}
-for pre in      '1 2' '[[]] 2' '1 [[]]' '[[]] [[]]' '2 1' '[[]] 1' '2 [[]]' \
-                '1 1' '2 2'; do
-    for post in '1 2' '[[]] 2' '1 [[]]' '[[]] [[]]' '2 1' '[[]] 1' '2 [[]]' \
-                '1 1' '2 2'; do
-        echo -----------------------------------------------------------
-        echo "Check changing port numbers from $pre to $post"
-        set_and_check_poorly_specified_ofports $pre
-        set_and_check_poorly_specified_ofports $post
-    done
-done
 OVS_VSWITCHD_STOP
 AT_CLEANUP

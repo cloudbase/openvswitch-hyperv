@@ -38,8 +38,6 @@ cat stdout >> output
 
 EXECUTION_EXAMPLES
 
-AT_BANNER([ovsdb-server miscellaneous features])
-
 AT_SETUP([truncating corrupted database log])
 AT_KEYWORDS([ovsdb server positive unix])
 OVS_RUNDIR=`pwd`; export OVS_RUNDIR
@@ -160,150 +158,10 @@ AT_CHECK(
 ordinals
 ], [ignore], [test ! -e pid || kill `cat pid`])
 AT_CHECK(
-  [[ovstest test-jsonrpc request unix:socket get_schema [\"nonexistent\"]]], [0],
+  [[test-jsonrpc request unix:socket get_schema [\"nonexistent\"]]], [0],
   [[{"error":null,"id":0,"result":{"details":"get_schema request specifies unknown database nonexistent","error":"unknown database","syntax":"[\"nonexistent\"]"}}
 ]], [], [test ! -e pid || kill `cat pid`])
 OVSDB_SERVER_SHUTDOWN
-AT_CLEANUP
-
-AT_SETUP([ovsdb-server/add-db and remove-db])
-AT_KEYWORDS([ovsdb server positive])
-ON_EXIT([kill `cat ovsdb-server.pid`])
-OVS_RUNDIR=`pwd`; export OVS_RUNDIR
-OVS_LOGDIR=`pwd`; export OVS_LOGDIR
-ordinal_schema > schema1
-constraint_schema > schema2
-AT_CHECK([ovsdb-tool create db1 schema1], [0], [ignore], [ignore])
-AT_CHECK([ovsdb-tool create db2 schema2], [0], [ignore], [ignore])
-
-# Start ovsdb-server with just a single database - db1.
-AT_CHECK([ovsdb-server --detach --no-chdir --pidfile --remote=punix:socket db1], [0])
-AT_CHECK([ovs-appctl -t ovsdb-server ovsdb-server/list-dbs],
-  [0], [ordinals
-])
-
-# Add the second database.
-AT_CHECK([ovs-appctl -t ovsdb-server ovsdb-server/add-db db2], [0])
-AT_CHECK([ovs-appctl -t ovsdb-server ovsdb-server/list-dbs],
-  [0], [constraints
-ordinals
-])
-
-# The databases are responsive.
-AT_CHECK([ovsdb-client list-tables unix:socket constraints], [0], [ignore], [ignore])
-AT_CHECK([ovsdb-client list-tables unix:socket ordinals], [0], [ignore], [ignore])
-
-# Add an already added database.
-AT_CHECK([ovs-appctl -t ovsdb-server ovsdb-server/add-db db2], 2, [],
-  [db2: already open
-ovs-appctl: ovsdb-server: server returned an error
-])
-
-# Add a non-existing database.
-AT_CHECK([ovs-appctl -t ovsdb-server ovsdb-server/add-db db3], 2, [], [stderr])
-AT_CHECK([sed 's/(.*)/(...)/' stderr], [0],
-  [I/O error: open: db3 failed (...)
-ovs-appctl: ovsdb-server: server returned an error
-])
-
-# Add a remote through a db path in db1.
-AT_CHECK([ovs-appctl -t ovsdb-server ovsdb-server/add-remote db:ordinals,ordinals,name], [0])
-AT_CHECK([ovs-appctl -t ovsdb-server ovsdb-server/list-remotes],
-  [0], [db:ordinals,ordinals,name
-punix:socket
-])
-
-# Removing db1 has no effect on its remote.
-AT_CHECK([ovs-appctl -t ovsdb-server ovsdb-server/remove-db ordinals], [0])
-AT_CHECK([ovs-appctl -t ovsdb-server ovsdb-server/list-dbs],
-  [0], [constraints
-])
-AT_CHECK([ovs-appctl -t ovsdb-server ovsdb-server/list-remotes],
-  [0], [db:ordinals,ordinals,name
-punix:socket
-])
-AT_CHECK([ovsdb-client list-tables unix:socket ordinals], [1], [ignore], [ignore])
-
-# Remove db2.
-AT_CHECK([ovs-appctl -t ovsdb-server ovsdb-server/remove-db constraints], [0])
-AT_CHECK([ovs-appctl -t ovsdb-server ovsdb-server/list-dbs],
-  [0], [])
-AT_CHECK([ovsdb-client list-tables unix:socket constraints], [1], [ignore], [ignore])
-
-# Remove a non-existent database.
-AT_CHECK([ovs-appctl -t ovsdb-server ovsdb-server/remove-db ordinals], [2],
-  [], [Failed to find the database.
-ovs-appctl: ovsdb-server: server returned an error
-])
-
-# Add a removed database.
-AT_CHECK([ovs-appctl -t ovsdb-server ovsdb-server/add-db db2], [0])
-AT_CHECK([ovs-appctl -t ovsdb-server ovsdb-server/list-dbs],
-  [0], [constraints
-])
-AT_CHECK([ovsdb-client list-tables unix:socket constraints], [0], [ignore], [ignore])
-AT_CLEANUP
-
-AT_SETUP([ovsdb-server/add-db with --monitor])
-AT_KEYWORDS([ovsdb server positive])
-# Start ovsdb-server, initially with one db.
-OVS_RUNDIR=`pwd`; export OVS_RUNDIR
-OVS_LOGDIR=`pwd`; export OVS_LOGDIR
-ordinal_schema > schema
-AT_CHECK([ovsdb-tool create db1 schema], [0], [ignore], [ignore])
-ON_EXIT([kill `cat *.pid`])
-AT_CHECK([ovsdb-server -v -vvlog:off --monitor --detach --no-chdir --pidfile --log-file db1])
-
-# Add the second database.
-constraint_schema > schema2
-AT_CHECK([ovsdb-tool create db2 schema2], [0], [ignore], [ignore])
-AT_CHECK([ovs-appctl -t ovsdb-server ovsdb-server/add-db db2], [0])
-AT_CHECK([ovs-appctl -t ovsdb-server ovsdb-server/list-dbs],
-  [0], [constraints
-ordinals
-])
-
-# Kill the daemon process, making it look like a segfault,
-# and wait for a new daemon process to get spawned.
-cp ovsdb-server.pid old.pid
-AT_CHECK([kill -SEGV `cat ovsdb-server.pid`])
-OVS_WAIT_WHILE([kill -0 `cat old.pid`])
-OVS_WAIT_UNTIL(
-  [test -s ovsdb-server.pid && test `cat ovsdb-server.pid` != `cat old.pid`])
-AT_CHECK([ovs-appctl -t ovsdb-server ovsdb-server/list-dbs],
-  [0], [constraints
-ordinals
-])
-AT_CLEANUP
-
-AT_SETUP([ovsdb-server/add-db and remove-db with --monitor])
-AT_KEYWORDS([ovsdb server positive])
-# Start ovsdb-server, initially with one db.
-OVS_RUNDIR=`pwd`; export OVS_RUNDIR
-OVS_LOGDIR=`pwd`; export OVS_LOGDIR
-ordinal_schema > schema
-AT_CHECK([ovsdb-tool create db1 schema], [0], [ignore], [ignore])
-constraint_schema > schema2
-AT_CHECK([ovsdb-tool create db2 schema2], [0], [ignore], [ignore])
-ON_EXIT([kill `cat *.pid`])
-AT_CHECK([ovsdb-server -v -vvlog:off --monitor --detach --no-chdir --pidfile --log-file db1 db2])
-
-# Remove the second database.
-AT_CHECK([ovs-appctl -t ovsdb-server ovsdb-server/remove-db constraints])
-AT_CHECK([ovs-appctl -t ovsdb-server ovsdb-server/list-dbs],
-  [0], [ordinals
-])
-
-# Kill the daemon process, making it look like a segfault,
-# and wait for a new daemon process to get spawned.
-cp ovsdb-server.pid old.pid
-AT_CHECK([kill -SEGV `cat ovsdb-server.pid`])
-OVS_WAIT_WHILE([kill -0 `cat old.pid`])
-OVS_WAIT_UNTIL(
-  [test -s ovsdb-server.pid && test `cat ovsdb-server.pid` != `cat old.pid`])
-AT_CHECK([ovs-appctl -t ovsdb-server ovsdb-server/list-dbs],
-  [0], [ordinals
-])
 AT_CLEANUP
 
 AT_SETUP([--remote=db: implementation])
@@ -349,7 +207,7 @@ AT_CHECK(
         "uuid-name": "x",
         "row": {"target": "punix:socket2"}}]']], [0], [ignore], [ignore])
 ON_EXIT([kill `cat ovsdb-server.pid`])
-AT_CHECK([ovsdb-server --enable-dummy --detach --no-chdir --pidfile --remote=db:mydb,Root,managers --remote=db:mydb,Root,manager_options --log-file db], [0], [ignore], [ignore])
+AT_CHECK([ovsdb-server --enable-dummy --detach --no-chdir --pidfile --remote=db:Root,managers --remote=db:Root,manager_options --log-file db], [0], [ignore], [ignore])
 for i in 1 2 3 4 5 6; do ovs-appctl -t ovsdb-server time/warp 1000; done
 AT_CHECK(
   [[ovsdb-client transact unix:socket1 \
@@ -482,7 +340,7 @@ AT_KEYWORDS([ovsdb server positive ssl $5])
 AT_SKIP_IF([test "$HAVE_OPENSSL" = no])
 PKIDIR=$abs_top_builddir/tests
 AT_SKIP_IF([expr "$PKIDIR" : ".*[ 	'\"
-\\]"])
+\\]"])
 AT_DATA([schema],
   [[{"name": "mydb",
      "tables": {
@@ -505,9 +363,9 @@ AT_CHECK(
 OVS_LOGDIR=`pwd`; export OVS_LOGDIR
 AT_CHECK(
   [ovsdb-server --log-file --detach --no-chdir --pidfile="`pwd`"/pid \
-        --private-key=db:mydb,SSL,private_key \
-        --certificate=db:mydb,SSL,certificate \
-        --ca-cert=db:mydb,SSL,ca_cert \
+        --private-key=db:SSL,private_key \
+        --certificate=db:SSL,certificate \
+        --ca-cert=db:SSL,ca_cert \
         --remote=pssl:0:127.0.0.1 --unixctl="`pwd`"/unixctl db],
   [0], [ignore], [ignore])
 SSL_PORT=`parse_listening_port < ovsdb-server.log`
@@ -574,7 +432,7 @@ AT_CHECK(
     done]],
   [0], [stdout], [ignore], [test ! -e pid || kill `cat pid`])
 dnl Check that all the crap is in fact in the database log.
-AT_CHECK([[${PERL} $srcdir/uuidfilt.pl db | grep -v ^OVSDB | sed 's/"_date":[0-9]*/"_date":0/' | ovstest test-json --multiple -]], [0],
+AT_CHECK([[${PERL} $srcdir/uuidfilt.pl db | grep -v ^OVSDB | sed 's/"_date":[0-9]*/"_date":0/' | test-json --multiple -]], [0],
   [[{"cksum":"12345678 9","name":"ordinals","tables":{"ordinals":{"columns":{"name":{"type":"string"},"number":{"type":"integer"}},"indexes":[["number"]]}},"version":"5.1.3"}
 {"_comment":"add row for zero 0","_date":0,"ordinals":{"<0>":{"name":"zero"}}}
 {"_comment":"delete row for 0","_date":0,"ordinals":{"<0>":null}}
@@ -663,96 +521,8 @@ _uuid                                name  number
 ], [], [test ! -e pid || kill `cat pid`])
 OVSDB_SERVER_SHUTDOWN
 AT_CLEANUP
-
-AT_SETUP([ovsdb-server combines updates on backlogged connections])
-OVS_LOGDIR=`pwd`; export OVS_LOGDIR
-OVS_RUNDIR=`pwd`; export OVS_RUNDIR
-ON_EXIT([kill `cat *.pid`])
-
-# The maximum socket receive buffer size is important for this test, which
-# tests behavior when the receive buffer overflows.
-if test -e /proc/sys/net/core/rmem_max; then
-    # Linux
-    rmem_max=`cat /proc/sys/net/core/rmem_max`
-elif rmem_max=`sysctl -n net.inet.tcp.recvbuf_max 2>/dev/null`; then
-    : # FreeBSD, NetBSD
-else
-    # Don't know how to get maximum socket receive buffer on this OS
-    AT_SKIP_IF([:])
-fi
-
-# Calculate the number of iterations we need to queue.  Each of the
-# iterations we execute, by itself, yields a monitor update of about
-# 25 kB, so fill up that much space plus a few for luck.
-n_iterations=`expr $rmem_max / 25000 + 5`
-echo rmem_max=$rmem_max n_iterations=$n_iterations
-
-# If there's too much queuing skip the test to avoid timing out.
-AT_SKIP_IF([test $rmem_max -gt 1048576])
-
-# Calculate the exact number of monitor updates expected for $n_iterations,
-# assuming no updates are combined.  The "extra" update is for the initial
-# contents of the database.
-n_updates=`expr $n_iterations \* 3 + 1`
-
-# Start an ovsdb-server with the vswitchd schema.
-OVSDB_INIT([db])
-AT_CHECK([ovsdb-server --detach --no-chdir --pidfile --log-file --remote=punix:db.sock db],
-  [0], [ignore], [ignore])
-
-# Executes a set of transactions that add a bridge with 100 ports, and
-# then deletes that bridge.  This yields three monitor updates that
-# add up to about 25 kB in size.
-#
-# The update also increments a counter held in the database so that we can
-# verify that the overall effect of the transactions took effect (e.g.
-# monitor updates at the end weren't just dropped).  We add an arbitrary
-# string to the counter to make grepping for it more reliable.
-counter=0
-trigger_big_update () {
-    counter=`expr $counter + 1`
-    ovs-vsctl --no-wait -- set open_vswitch . system_version=xyzzy$counter
-    ovs-vsctl --no-wait -- add-br br0 $add
-    ovs-vsctl --no-wait -- del-br br0
-}
-add_ports () {
-    for j in `seq 1 100`; do
-        printf " -- add-port br0 p%d" $j
-    done
-}
-add=`add_ports`
-
-AT_CAPTURE_FILE([ovsdb-client.err])
-
-# Start an ovsdb-client monitoring all changes to the database,
-# make it block to force the buffers to fill up, and then execute
-# enough iterations that ovsdb-server starts combining updates.
-AT_CHECK([ovsdb-client --detach --no-chdir --pidfile monitor ALL >ovsdb-client.out 2>ovsdb-client.err])
-AT_CHECK([ovs-appctl -t ovsdb-client ovsdb-client/block])
-for i in `seq 1 $n_iterations`; do
-    echo "blocked update ($i of $n_iterations)"
-    trigger_big_update $i
-done
-AT_CHECK([ovs-appctl -t ovsdb-client ovsdb-client/unblock])
-OVS_WAIT_UNTIL([grep "\"xyzzy$counter\"" ovsdb-client.out])
-AT_CHECK([ovs-appctl -t ovsdb-client exit])
-OVS_WAIT_WHILE([test -e ovsdb-client.pid])
-
-# Count the number of updates in the ovsdb-client output, by counting
-# the number of changes to the Open_vSwitch table.  (All of our
-# transactions modify the Open_vSwitch table.)  It should be less than
-# $n_updates updates.
-#
-# Check that the counter is what we expect.
-logged_updates=`grep -c '^Open_vSwitch' ovsdb-client.out`
-echo "logged_updates=$logged_updates (expected less than $n_updates)"
-AT_CHECK([test $logged_updates -lt $n_updates])
-AT_CHECK_UNQUOTED([ovs-vsctl get open_vswitch . system_version], [0],
-  ["xyzzy$counter"
-])
-AT_CLEANUP
 
-AT_BANNER([OVSDB -- ovsdb-server transactions (SSL IPv4 sockets)])
+AT_BANNER([OVSDB -- ovsdb-server transactions (SSL sockets)])
 
 # OVSDB_CHECK_EXECUTION(TITLE, SCHEMA, TRANSACTIONS, OUTPUT, [KEYWORDS])
 #
@@ -791,46 +561,7 @@ cat stdout >> output
 
 EXECUTION_EXAMPLES
 
-AT_BANNER([OVSDB -- ovsdb-server transactions (SSL IPv6 sockets)])
-
-# OVSDB_CHECK_EXECUTION(TITLE, SCHEMA, TRANSACTIONS, OUTPUT, [KEYWORDS])
-#
-# Creates a database with the given SCHEMA, starts an ovsdb-server on
-# that database, and runs each of the TRANSACTIONS (which should be a
-# quoted list of quoted strings) against it with ovsdb-client one at a
-# time.
-#
-# Checks that the overall output is OUTPUT, but UUIDs in the output
-# are replaced by markers of the form <N> where N is a number.  The
-# first unique UUID is replaced by <0>, the next by <1>, and so on.
-# If a given UUID appears more than once it is always replaced by the
-# same marker.
-#
-# TITLE is provided to AT_SETUP and KEYWORDS to AT_KEYWORDS.
-m4_define([OVSDB_CHECK_EXECUTION],
-  [AT_SETUP([$1])
-   AT_KEYWORDS([ovsdb server positive ssl6 $5])
-   AT_SKIP_IF([test "$HAVE_OPENSSL" = no])
-   OVS_RUNDIR=`pwd`; export OVS_RUNDIR
-   OVS_LOGDIR=`pwd`; export OVS_LOGDIR
-   $2 > schema
-   PKIDIR=$abs_top_builddir/tests
-   AT_CHECK([ovsdb-tool create db schema], [0], [stdout], [ignore])
-   AT_CHECK([ovsdb-server --log-file --detach --no-chdir --pidfile="`pwd`"/pid --private-key=$PKIDIR/testpki-privkey2.pem --certificate=$PKIDIR/testpki-cert2.pem --ca-cert=$PKIDIR/testpki-cacert.pem --remote=pssl:0:[[::1]] --unixctl="`pwd`"/unixctl db], [0], [ignore], [ignore])
-   SSL_PORT=`parse_listening_port < ovsdb-server.log`
-   m4_foreach([txn], [$3],
-     [AT_CHECK([ovsdb-client --private-key=$PKIDIR/testpki-privkey.pem --certificate=$PKIDIR/testpki-cert.pem --ca-cert=$PKIDIR/testpki-cacert.pem transact ssl:[[::1]]:$SSL_PORT 'txn'], [0], [stdout], [ignore],
-     [test ! -e pid || kill `cat pid`])
-cat stdout >> output
-])
-   AT_CHECK([${PERL} $srcdir/uuidfilt.pl output], [0], [$4], [ignore],
-            [test ! -e pid || kill `cat pid`])
-   OVSDB_SERVER_SHUTDOWN
-   AT_CLEANUP])
-
-ONE_EXECUTION_EXAMPLE
-
-AT_BANNER([OVSDB -- ovsdb-server transactions (TCP IPv4 sockets)])
+AT_BANNER([OVSDB -- ovsdb-server transactions (TCP sockets)])
 
 AT_SETUP([ovsdb-client get-schema-version - tcp socket])
 AT_KEYWORDS([ovsdb server positive tcp])
@@ -879,44 +610,6 @@ cat stdout >> output
    AT_CLEANUP])
 
 EXECUTION_EXAMPLES
-
-AT_BANNER([OVSDB -- ovsdb-server transactions (TCP IPv6 sockets)])
-
-# OVSDB_CHECK_EXECUTION(TITLE, SCHEMA, TRANSACTIONS, OUTPUT, [KEYWORDS])
-#
-# Creates a database with the given SCHEMA, starts an ovsdb-server on
-# that database, and runs each of the TRANSACTIONS (which should be a
-# quoted list of quoted strings) against it with ovsdb-client one at a
-# time.
-#
-# Checks that the overall output is OUTPUT, but UUIDs in the output
-# are replaced by markers of the form <N> where N is a number.  The
-# first unique UUID is replaced by <0>, the next by <1>, and so on.
-# If a given UUID appears more than once it is always replaced by the
-# same marker.
-#
-# TITLE is provided to AT_SETUP and KEYWORDS to AT_KEYWORDS.
-m4_define([OVSDB_CHECK_EXECUTION],
-  [AT_SETUP([$1])
-   AT_KEYWORDS([ovsdb server positive tcp6 $5])
-   OVS_RUNDIR=`pwd`; export OVS_RUNDIR
-   OVS_LOGDIR=`pwd`; export OVS_LOGDIR
-   $2 > schema
-   PKIDIR=$abs_top_builddir/tests
-   AT_CHECK([ovsdb-tool create db schema], [0], [stdout], [ignore])
-   AT_CHECK([ovsdb-server --log-file --detach --no-chdir --pidfile="`pwd`"/pid --remote=ptcp:0:[[::1]] --unixctl="`pwd`"/unixctl db], [0], [ignore], [ignore])
-   TCP_PORT=`parse_listening_port < ovsdb-server.log`
-   m4_foreach([txn], [$3],
-     [AT_CHECK([ovsdb-client transact tcp:[[::1]]:$TCP_PORT 'txn'], [0], [stdout], [ignore],
-     [test ! -e pid || kill `cat pid`])
-cat stdout >> output
-])
-   AT_CHECK([${PERL} $srcdir/uuidfilt.pl output], [0], [$4], [ignore],
-            [test ! -e pid || kill `cat pid`])
-   OVSDB_SERVER_SHUTDOWN
-   AT_CLEANUP])
-
-ONE_EXECUTION_EXAMPLE
 
 AT_BANNER([OVSDB -- transactions on transient ovsdb-server])
 

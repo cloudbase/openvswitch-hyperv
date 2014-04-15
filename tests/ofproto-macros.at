@@ -21,7 +21,7 @@ s/ hard_age=[0-9]*,//
 # log, given that the server was told to listen on a kernel-chosen
 # port, file provided on stdin, and prints the port number on stdout.
 # You should specify the listening remote as ptcp:0:127.0.0.1 or
-# pssl:0:127.0.0.1, or the equivalent with [::1] instead of 127.0.0.1.
+# pssl:0:127.0.0.1.
 #
 # Here's an example of how to use this with ovsdb-server:
 #
@@ -29,7 +29,7 @@ s/ hard_age=[0-9]*,//
 #    ovsdb-server --log-file --remote=ptcp:0:127.0.0.1 ...
 #    TCP_PORT=`parse_listening_port < ovsdb-server.log`
 parse_listening_port () {
-    sed -n 's/.*0:.*: listening on port \([0-9]*\)$/\1/p'
+    sed -n 's/.*0:127\.0\.0\.1: listening on port \([0-9]*\)$/\1/p'
 }]
 m4_divert_pop([PREPARE_TESTS])
 
@@ -38,7 +38,7 @@ m4_define([STRIP_DURATION], [[sed 's/\bduration=[0-9.]*s/duration=?s/']])
 m4_define([STRIP_USED], [[sed 's/used:[0-9]\.[0-9]*/used:0.0/']])
 m4_define([TESTABLE_LOG], [-vPATTERN:ANY:'%c|%p|%m'])
 
-# OVS_VSWITCHD_START([vsctl-args], [vsctl-output], [=override])
+# OVS_VSWITCHD_START([vsctl-args], [vsctl-output])
 #
 # Creates a database and starts ovsdb-server, starts ovs-vswitchd
 # connected to that database, calls ovs-vsctl to create a bridge named
@@ -46,11 +46,6 @@ m4_define([TESTABLE_LOG], [-vPATTERN:ANY:'%c|%p|%m'])
 # commands to ovs-vsctl.  If 'vsctl-args' causes ovs-vsctl to provide
 # output (e.g. because it includes "create" commands) then 'vsctl-output'
 # specifies the expected output after filtering through uuidfilt.pl.
-#
-# If a test needs to use "system" devices (as dummies), then specify
-# =override (literally) as the third argument.  Otherwise, system devices
-# won't work at all (which makes sense because tests should not access a
-# system's real Ethernet devices).
 m4_define([OVS_VSWITCHD_START],
   [OVS_RUNDIR=`pwd`; export OVS_RUNDIR
    OVS_LOGDIR=`pwd`; export OVS_LOGDIR
@@ -73,7 +68,7 @@ m4_define([OVS_VSWITCHD_START],
    AT_CHECK([ovs-vsctl --no-wait init])
 
    dnl Start ovs-vswitchd.
-   AT_CHECK([ovs-vswitchd --detach --no-chdir --pidfile --enable-dummy$3 --disable-system --log-file -vvconn -vofproto_dpif], [0], [], [stderr])
+   AT_CHECK([ovs-vswitchd --detach --no-chdir --pidfile --enable-dummy --disable-system --log-file -vvconn -vofproto_dpif], [0], [], [stderr])
    AT_CAPTURE_FILE([ovs-vswitchd.log])
    AT_CHECK([[sed < stderr '
 /vlog|INFO|opened log file/d
@@ -83,16 +78,12 @@ m4_define([OVS_VSWITCHD_START],
 /ofproto|INFO|datapath ID changed to fedcba9876543210/d']])
 
    dnl Add bridges, ports, etc.
-   AT_CHECK([ovs-vsctl -- add-br br0 -- set bridge br0 datapath-type=dummy other-config:datapath-id=fedcba9876543210 other-config:hwaddr=aa:55:aa:55:00:00 protocols=[[OpenFlow10,OpenFlow11,OpenFlow12,OpenFlow13]] fail-mode=secure -- $1 m4_if([$2], [], [], [| ${PERL} $srcdir/uuidfilt.pl])], [0], [$2])
+   AT_CHECK([ovs-vsctl -- add-br br0 -- set bridge br0 datapath-type=dummy other-config:datapath-id=fedcba9876543210 other-config:hwaddr=aa:55:aa:55:00:00 protocols=[[OpenFlow10,OpenFlow12,OpenFlow13]] fail-mode=secure -- $1 m4_if([$2], [], [], [| ${PERL} $srcdir/uuidfilt.pl])], [0], [$2])
 ])
 
 m4_divert_push([PREPARE_TESTS])
 check_logs () {
     sed -n "$1
-/timeval.*Unreasonably long [[0-9]]*ms poll interval/d
-/timeval.*faults: [[0-9]]* minor, [[0-9]]* major/d
-/timeval.*disk: [[0-9]]* reads, [[0-9]]* writes/d
-/timeval.*context switches: [[0-9]]* voluntary, [[0-9]]* involuntary/d
 /|WARN|/p
 /|ERR|/p
 /|EMER|/p" ovs-vswitchd.log ovsdb-server.log

@@ -1,143 +1,16 @@
 AT_BANNER([ovs-ofctl])
 
-AT_SETUP([ovs-ofctl parse-flows choice of protocol])
-# This doesn't cover some potential vlan_tci test cases.
-for test_case in \
-    'tun_id=0                                    NXM,OXM,OXM-OpenFlow14' \
-    'tun_id=0/0x1                                NXM,OXM,OXM-OpenFlow14' \
-    'tun_src=1.2.3.4                             NXM,OXM,OXM-OpenFlow14' \
-    'tun_src=1.2.3.4/0.0.0.1                     NXM,OXM,OXM-OpenFlow14' \
-    'tun_dst=1.2.3.4                             NXM,OXM,OXM-OpenFlow14' \
-    'tun_dst=1.2.3.4/0.0.0.1                     NXM,OXM,OXM-OpenFlow14' \
-    'tun_flags=0                                 none' \
-    'tun_flags=1/1                               none' \
-    'tun_tos=0                                   none' \
-    'tun_ttl=0                                   none' \
-    'metadata=0                                  NXM,OXM,OpenFlow11,OXM-OpenFlow14' \
-    'metadata=1/1                                NXM,OXM,OpenFlow11,OXM-OpenFlow14' \
-    'in_port=1                                   any,OXM-OpenFlow14' \
-    'skb_priority=0                              none' \
-    'pkt_mark=1                                  NXM,OXM,OXM-OpenFlow14' \
-    'pkt_mark=1/1                                NXM,OXM,OXM-OpenFlow14' \
-    'reg0=0                                      NXM,OXM,OXM-OpenFlow14' \
-    'reg0=0/1                                    NXM,OXM,OXM-OpenFlow14' \
-    'reg1=1                                      NXM,OXM,OXM-OpenFlow14' \
-    'reg1=1/1                                    NXM,OXM,OXM-OpenFlow14' \
-    'reg2=2                                      NXM,OXM,OXM-OpenFlow14' \
-    'reg2=2/1                                    NXM,OXM,OXM-OpenFlow14' \
-    'reg3=3                                      NXM,OXM,OXM-OpenFlow14' \
-    'reg3=3/1                                    NXM,OXM,OXM-OpenFlow14' \
-    'reg4=4                                      NXM,OXM,OXM-OpenFlow14' \
-    'reg4=4/1                                    NXM,OXM,OXM-OpenFlow14' \
-    'reg5=5                                      NXM,OXM,OXM-OpenFlow14' \
-    'reg5=5/1                                    NXM,OXM,OXM-OpenFlow14' \
-    'reg6=6                                      NXM,OXM,OXM-OpenFlow14' \
-    'reg6=6/1                                    NXM,OXM,OXM-OpenFlow14' \
-    'reg7=7                                      NXM,OXM,OXM-OpenFlow14' \
-    'reg7=7/1                                    NXM,OXM,OXM-OpenFlow14' \
-    'dl_src=00:11:22:33:44:55                    any,OXM-OpenFlow14' \
-    'dl_src=00:11:22:33:44:55/00:ff:ff:ff:ff:ff  NXM,OXM,OpenFlow11,OXM-OpenFlow14' \
-    'dl_dst=00:11:22:33:44:55                    any,OXM-OpenFlow14' \
-    'dl_dst=00:11:22:33:44:55/00:ff:ff:ff:ff:ff  NXM,OXM,OpenFlow11,OXM-OpenFlow14' \
-    'dl_type=0x1234                              any,OXM-OpenFlow14' \
-    'dl_type=0x0800                              any,OXM-OpenFlow14' \
-    'dl_type=0x0806                              any,OXM-OpenFlow14' \
-    'dl_type=0x86dd                              any,OXM-OpenFlow14' \
-    'vlan_tci=0                                  any,OXM-OpenFlow14' \
-    'vlan_tci=0x1009                             any,OXM-OpenFlow14' \
-    'vlan_tci=0x1009/0x1                         NXM,OXM,OXM-OpenFlow14' \
-    'dl_vlan=9                                   any,OXM-OpenFlow14' \
-    'vlan_vid=11                                 any,OXM-OpenFlow14' \
-    'vlan_vid=11/0x1                             NXM,OXM,OXM-OpenFlow14' \
-    'dl_vlan_pcp=6                               any,OXM-OpenFlow14' \
-    'vlan_pcp=5                                  any,OXM-OpenFlow14' \
-    'mpls,mpls_label=5                           NXM,OXM,OpenFlow11,OXM-OpenFlow14' \
-    'mpls,mpls_tc=1                              NXM,OXM,OpenFlow11,OXM-OpenFlow14' \
-    'mpls,mpls_bos=0                             NXM,OXM,OXM-OpenFlow14' \
-    'ip,ip_src=1.2.3.4                           any,OXM-OpenFlow14' \
-    'ip,ip_src=192.168.0.0/24                    any,OXM-OpenFlow14' \
-    'ip,ip_src=192.0.168.0/255.0.255.0           NXM,OXM,OpenFlow11,OXM-OpenFlow14' \
-    'ip,ip_dst=1.2.3.4                           any,OXM-OpenFlow14' \
-    'ip,ip_dst=192.168.0.0/24                    any,OXM-OpenFlow14' \
-    'ip,ip_dst=192.0.168.0/255.0.255.0           NXM,OXM,OpenFlow11,OXM-OpenFlow14' \
-    'ipv6,ipv6_src=::1                           NXM,OXM,OXM-OpenFlow14' \
-    'ipv6,ipv6_src=::1/::1                       NXM,OXM,OXM-OpenFlow14' \
-    'ipv6,ipv6_dst=::1                           NXM,OXM,OXM-OpenFlow14' \
-    'ipv6,ipv6_dst=::1/::1                       NXM,OXM,OXM-OpenFlow14' \
-    'ipv6,ipv6_label=5                           NXM,OXM,OXM-OpenFlow14' \
-    'ipv6,ipv6_label=5/1                         NXM,OXM,OXM-OpenFlow14' \
-    'ip,nw_proto=1                               any,OXM-OpenFlow14' \
-    'ipv6,nw_proto=1                             NXM,OXM,OXM-OpenFlow14' \
-    'ip,nw_tos=0xf0                              any,OXM-OpenFlow14' \
-    'ipv6,nw_tos=0xf0                            NXM,OXM,OXM-OpenFlow14' \
-    'ip,ip_dscp=0x3c                             any,OXM-OpenFlow14' \
-    'ipv6,ip_dscp=0x3c                           NXM,OXM,OXM-OpenFlow14' \
-    'ip,nw_ecn=1                                 NXM,OXM,OXM-OpenFlow14' \
-    'ipv6,nw_ecn=1                               NXM,OXM,OXM-OpenFlow14' \
-    'ip,nw_ttl=5                                 NXM,OXM,OXM-OpenFlow14' \
-    'ipv6,nw_ttl=5                               NXM,OXM,OXM-OpenFlow14' \
-    'ip,ip_frag=no                               NXM,OXM,OXM-OpenFlow14' \
-    'ipv6,ip_frag=no                             NXM,OXM,OXM-OpenFlow14' \
-    'arp,arp_op=0                                any,OXM-OpenFlow14' \
-    'arp,arp_spa=1.2.3.4                         any,OXM-OpenFlow14' \
-    'arp,arp_spa=1.2.3.4/0.0.0.1                 NXM,OXM,OpenFlow11,OXM-OpenFlow14' \
-    'arp,arp_tpa=1.2.3.4                         any,OXM-OpenFlow14' \
-    'arp,arp_tpa=1.2.3.4/0.0.0.1                 NXM,OXM,OpenFlow11,OXM-OpenFlow14' \
-    'arp,arp_sha=00:11:22:33:44:55               NXM,OXM,OXM-OpenFlow14' \
-    'arp,arp_sha=00:11:22:33:44:55/00:ff:ff:ff:ff:ff NXM,OXM,OXM-OpenFlow14' \
-    'arp,arp_tha=00:11:22:33:44:55               NXM,OXM,OXM-OpenFlow14' \
-    'arp,arp_tha=00:11:22:33:44:55/00:ff:ff:ff:ff:ff NXM,OXM,OXM-OpenFlow14' \
-    'tcp,tcp_src=80                              any,OXM-OpenFlow14' \
-    'tcp,tcp_src=0x1000/0x1000                   NXM,OXM,OXM-OpenFlow14' \
-    'tcp6,tcp_src=80                             NXM,OXM,OXM-OpenFlow14' \
-    'tcp6,tcp_src=0x1000/0x1000                  NXM,OXM,OXM-OpenFlow14' \
-    'tcp,tcp_dst=80                              any,OXM-OpenFlow14' \
-    'tcp,tcp_dst=0x1000/0x1000                   NXM,OXM,OXM-OpenFlow14' \
-    'tcp6,tcp_dst=80                             NXM,OXM,OXM-OpenFlow14' \
-    'tcp6,tcp_dst=0x1000/0x1000                  NXM,OXM,OXM-OpenFlow14' \
-    'udp,udp_src=80                              any,OXM-OpenFlow14' \
-    'udp,udp_src=0x1000/0x1000                   NXM,OXM,OXM-OpenFlow14' \
-    'udp6,udp_src=80                             NXM,OXM,OXM-OpenFlow14' \
-    'udp6,udp_src=0x1000/0x1000                  NXM,OXM,OXM-OpenFlow14' \
-    'udp,udp_dst=80                              any,OXM-OpenFlow14' \
-    'udp,udp_dst=0x1000/0x1000                   NXM,OXM,OXM-OpenFlow14' \
-    'udp6,udp_dst=80                             NXM,OXM,OXM-OpenFlow14' \
-    'udp6,udp_dst=0x1000/0x1000                  NXM,OXM,OXM-OpenFlow14' \
-    'icmp,icmp_type=1                            any,OXM-OpenFlow14' \
-    'icmp,icmp_code=2                            any,OXM-OpenFlow14' \
-    'icmp6,icmpv6_type=1                         NXM,OXM,OXM-OpenFlow14' \
-    'icmp6,icmpv6_code=2                         NXM,OXM,OXM-OpenFlow14'
-do
-    set $test_case
-    echo
-    echo "### test case: '$1' should have usable protocols '$2'"
-    if test "$2" = none; then
-      AT_CHECK([ovs-ofctl parse-flow "$1,actions=drop"], [1],
-               [usable protocols: none
-],
-               [ovs-ofctl: no usable protocol
-])
-    else
-      AT_CHECK_UNQUOTED([ovs-ofctl parse-flow "$1,actions=drop" | sed 1q], [0],
-                        [usable protocols: $2
-])
-    fi
-done
-AT_CLEANUP
-
 AT_SETUP([ovs-ofctl parse-flows (OpenFlow 1.0)])
 AT_DATA([flows.txt], [[
 # comment
-tcp,tp_src=123,out_port=5,actions=flood
+tcp,tp_src=123,actions=flood
 in_port=LOCAL dl_vlan=9 dl_src=00:0A:E4:25:6B:B0 actions=drop
 udp dl_vlan_pcp=7 idle_timeout=5 actions=strip_vlan output:0
 tcp,nw_src=192.168.0.3,tp_dst=80 actions=set_queue:37,output:1
 udp,nw_src=192.168.0.3,tp_dst=53 actions=pop_queue,output:1
 cookie=0x123456789abcdef hard_timeout=10 priority=60000 actions=controller
 actions=note:41.42.43,note:00.01.02.03.04.05.06.07,note
-ip,actions=set_field:10.4.3.77->ip_src
-sctp actions=drop
-sctp actions=drop
+actions=set_field:fe80:0123:4567:890a:a6ba:dbff:fefe:59fa->ipv6_src
 in_port=0 actions=resubmit:0
 actions=sample(probability=12345,collector_set_id=23456,obs_domain_id=34567,obs_point_id=45678)
 ]])
@@ -145,57 +18,18 @@ actions=sample(probability=12345,collector_set_id=23456,obs_domain_id=34567,obs_
 AT_CHECK([ovs-ofctl parse-flows flows.txt
 ], [0], [stdout])
 AT_CHECK([[sed 's/ (xid=0x[0-9a-fA-F]*)//' stdout]], [0],
-[[usable protocols: any,OXM-OpenFlow14
+[[usable protocols: any
 chosen protocol: OpenFlow10-table_id
-OFPT_FLOW_MOD: ADD tcp,tp_src=123 out_port:5 actions=FLOOD
+OFPT_FLOW_MOD: ADD tcp,tp_src=123 actions=FLOOD
 OFPT_FLOW_MOD: ADD in_port=LOCAL,dl_vlan=9,dl_src=00:0a:e4:25:6b:b0 actions=drop
 OFPT_FLOW_MOD: ADD udp,dl_vlan_pcp=7 idle:5 actions=strip_vlan,output:0
 OFPT_FLOW_MOD: ADD tcp,nw_src=192.168.0.3,tp_dst=80 actions=set_queue:37,output:1
 OFPT_FLOW_MOD: ADD udp,nw_src=192.168.0.3,tp_dst=53 actions=pop_queue,output:1
 OFPT_FLOW_MOD: ADD priority=60000 cookie:0x123456789abcdef hard:10 actions=CONTROLLER:65535
 OFPT_FLOW_MOD: ADD actions=note:41.42.43.00.00.00,note:00.01.02.03.04.05.06.07.00.00.00.00.00.00,note:00.00.00.00.00.00
-OFPT_FLOW_MOD: ADD ip actions=mod_nw_src:10.4.3.77
-OFPT_FLOW_MOD: ADD sctp actions=drop
-OFPT_FLOW_MOD: ADD sctp actions=drop
+OFPT_FLOW_MOD: ADD actions=load:0xa6badbfffefe59fa->NXM_NX_IPV6_SRC[0..63],load:0xfe8001234567890a->NXM_NX_IPV6_SRC[64..127]
 OFPT_FLOW_MOD: ADD in_port=0 actions=resubmit:0
 OFPT_FLOW_MOD: ADD actions=sample(probability=12345,collector_set_id=23456,obs_domain_id=34567,obs_point_id=45678)
-]])
-AT_CLEANUP
-
-AT_SETUP([ovs-ofctl parse-flows (OpenFlow 1.1)])
-AT_DATA([flows.txt], [[
-# comment
-tcp,tp_src=123,out_port=5,actions=flood
-in_port=LOCAL dl_vlan=9 dl_src=00:0A:E4:25:6B:B0 actions=drop
-udp dl_vlan_pcp=7 idle_timeout=5 actions=strip_vlan output:0
-tcp,nw_src=192.168.0.3,tp_dst=80 actions=set_queue:37,output:1
-udp,nw_src=192.168.0.3,tp_dst=53 actions=mod_nw_ecn:2,output:1
-cookie=0x123456789abcdef hard_timeout=10 priority=60000 actions=controller
-actions=note:41.42.43,note:00.01.02.03.04.05.06.07,note
-ip,actions=mod_nw_ttl:1,set_field:10.4.3.77->ip_src
-sctp actions=drop
-sctp actions=drop
-in_port=0 actions=resubmit:0
-actions=sample(probability=12345,collector_set_id=23456,obs_domain_id=34567,obs_point_id=45678)
-]])
-
-AT_CHECK([ovs-ofctl --protocols OpenFlow11 parse-flows flows.txt
-], [0], [stdout])
-AT_CHECK([[sed 's/ (xid=0x[0-9a-fA-F]*)//' stdout]], [0],
-[[usable protocols: any,OXM-OpenFlow14
-chosen protocol: OpenFlow11
-OFPT_FLOW_MOD (OF1.1): ADD tcp,tp_src=123 out_port:5 actions=FLOOD
-OFPT_FLOW_MOD (OF1.1): ADD in_port=LOCAL,dl_vlan=9,dl_src=00:0a:e4:25:6b:b0 actions=drop
-OFPT_FLOW_MOD (OF1.1): ADD udp,dl_vlan_pcp=7 idle:5 actions=pop_vlan,output:0
-OFPT_FLOW_MOD (OF1.1): ADD tcp,nw_src=192.168.0.3,tp_dst=80 actions=set_queue:37,output:1
-OFPT_FLOW_MOD (OF1.1): ADD udp,nw_src=192.168.0.3,tp_dst=53 actions=mod_nw_ecn:2,output:1
-OFPT_FLOW_MOD (OF1.1): ADD priority=60000 cookie:0x123456789abcdef hard:10 actions=CONTROLLER:65535
-OFPT_FLOW_MOD (OF1.1): ADD actions=note:41.42.43.00.00.00,note:00.01.02.03.04.05.06.07.00.00.00.00.00.00,note:00.00.00.00.00.00
-OFPT_FLOW_MOD (OF1.1): ADD ip actions=mod_nw_ttl:1,mod_nw_src:10.4.3.77
-OFPT_FLOW_MOD (OF1.1): ADD sctp actions=drop
-OFPT_FLOW_MOD (OF1.1): ADD sctp actions=drop
-OFPT_FLOW_MOD (OF1.1): ADD in_port=0 actions=resubmit:0
-OFPT_FLOW_MOD (OF1.1): ADD actions=sample(probability=12345,collector_set_id=23456,obs_domain_id=34567,obs_point_id=45678)
 ]])
 AT_CLEANUP
 
@@ -203,19 +37,13 @@ AT_SETUP([ovs-ofctl parse-flows (OpenFlow 1.2)])
 AT_DATA([flows.txt], [[
 # comment
 tcp,tp_src=123,actions=flood
-in_port=LOCAL dl_vlan=9 dl_src=00:0A:E4:25:6B:B0 actions=mod_vlan_vid:7,mod_vlan_pcp:2
+in_port=LOCAL dl_vlan=9 dl_src=00:0A:E4:25:6B:B0 actions=drop
 udp dl_vlan_pcp=7 idle_timeout=5 actions=strip_vlan output:0
 tcp,nw_src=192.168.0.3,tp_dst=80 actions=set_queue:37,output:1
 udp,nw_src=192.168.0.3,tp_dst=53 actions=pop_queue,output:1
 cookie=0x123456789abcdef hard_timeout=10 priority=60000 actions=controller
 actions=note:41.42.43,note:00.01.02.03.04.05.06.07,note
-ipv6,actions=set_field:fe80:0123:4567:890a:a6ba:dbff:fefe:59fa->ipv6_src
-sctp actions=set_field:3334->sctp_src
-sctp actions=set_field:4445->sctp_dst
-tcp actions=mod_tp_dst:1234
-udp actions=mod_tp_src:1111
-ip actions=mod_nw_src:10.1.1.2,mod_nw_dst:192.168.10.1,mod_nw_ttl:1,mod_nw_tos:16,mod_nw_ecn:2
-in_port=0 actions=mod_dl_src:11:22:33:44:55:66,mod_dl_dst:10:20:30:40:50:60
+actions=set_field:fe80:0123:4567:890a:a6ba:dbff:fefe:59fa->ipv6_src
 in_port=0 actions=resubmit:0
 actions=sample(probability=12345,collector_set_id=23456,obs_domain_id=34567,obs_point_id=45678)
 ]])
@@ -223,70 +51,19 @@ actions=sample(probability=12345,collector_set_id=23456,obs_domain_id=34567,obs_
 AT_CHECK([ovs-ofctl --protocols OpenFlow12 parse-flows flows.txt
 ], [0], [stdout])
 AT_CHECK([[sed 's/ (xid=0x[0-9a-fA-F]*)//' stdout]], [0],
-[[usable protocols: NXM,OXM,OXM-OpenFlow14
+[[usable protocols: any
 chosen protocol: OXM-OpenFlow12
-OFPT_FLOW_MOD (OF1.2): ADD tcp,tp_src=123 actions=FLOOD
-OFPT_FLOW_MOD (OF1.2): ADD in_port=LOCAL,dl_vlan=9,dl_src=00:0a:e4:25:6b:b0 actions=set_field:4103->vlan_vid,set_field:2->vlan_pcp
-OFPT_FLOW_MOD (OF1.2): ADD udp,dl_vlan_pcp=7 idle:5 actions=pop_vlan,output:0
-OFPT_FLOW_MOD (OF1.2): ADD tcp,nw_src=192.168.0.3,tp_dst=80 actions=set_queue:37,output:1
-OFPT_FLOW_MOD (OF1.2): ADD udp,nw_src=192.168.0.3,tp_dst=53 actions=pop_queue,output:1
-OFPT_FLOW_MOD (OF1.2): ADD priority=60000 cookie:0x123456789abcdef hard:10 actions=CONTROLLER:65535
-OFPT_FLOW_MOD (OF1.2): ADD actions=note:41.42.43.00.00.00,note:00.01.02.03.04.05.06.07.00.00.00.00.00.00,note:00.00.00.00.00.00
-OFPT_FLOW_MOD (OF1.2): ADD ipv6 actions=set_field:fe80:123:4567:890a:a6ba:dbff:fefe:59fa->ipv6_src
-OFPT_FLOW_MOD (OF1.2): ADD sctp actions=set_field:3334->sctp_src
-OFPT_FLOW_MOD (OF1.2): ADD sctp actions=set_field:4445->sctp_dst
-OFPT_FLOW_MOD (OF1.2): ADD tcp actions=set_field:1234->tcp_dst
-OFPT_FLOW_MOD (OF1.2): ADD udp actions=set_field:1111->udp_src
-OFPT_FLOW_MOD (OF1.2): ADD ip actions=set_field:10.1.1.2->ip_src,set_field:192.168.10.1->ip_dst,mod_nw_ttl:1,set_field:4->ip_dscp,set_field:2->nw_ecn
-OFPT_FLOW_MOD (OF1.2): ADD in_port=0 actions=set_field:11:22:33:44:55:66->eth_src,set_field:10:20:30:40:50:60->eth_dst
-OFPT_FLOW_MOD (OF1.2): ADD in_port=0 actions=resubmit:0
-OFPT_FLOW_MOD (OF1.2): ADD actions=sample(probability=12345,collector_set_id=23456,obs_domain_id=34567,obs_point_id=45678)
+OFPT_FLOW_MOD (OF1.2): ADD table:255 tcp,tp_src=123 actions=FLOOD
+OFPT_FLOW_MOD (OF1.2): ADD table:255 in_port=LOCAL,dl_vlan=9,dl_src=00:0a:e4:25:6b:b0 actions=drop
+OFPT_FLOW_MOD (OF1.2): ADD table:255 udp,dl_vlan_pcp=7 idle:5 actions=strip_vlan,output:0
+OFPT_FLOW_MOD (OF1.2): ADD table:255 tcp,nw_src=192.168.0.3,tp_dst=80 actions=set_queue:37,output:1
+OFPT_FLOW_MOD (OF1.2): ADD table:255 udp,nw_src=192.168.0.3,tp_dst=53 actions=pop_queue,output:1
+OFPT_FLOW_MOD (OF1.2): ADD table:255 priority=60000 cookie:0x123456789abcdef hard:10 actions=CONTROLLER:65535
+OFPT_FLOW_MOD (OF1.2): ADD table:255 actions=note:41.42.43.00.00.00,note:00.01.02.03.04.05.06.07.00.00.00.00.00.00,note:00.00.00.00.00.00
+OFPT_FLOW_MOD (OF1.2): ADD table:255 actions=set_field:fe80:123:4567:890a:a6ba:dbff:fefe:59fa->ipv6_src
+OFPT_FLOW_MOD (OF1.2): ADD table:255 in_port=0 actions=resubmit:0
+OFPT_FLOW_MOD (OF1.2): ADD table:255 actions=sample(probability=12345,collector_set_id=23456,obs_domain_id=34567,obs_point_id=45678)
 ]])
-AT_CLEANUP
-
-AT_SETUP([ovs-ofctl parse-flow with invalid mask])
-for test_case in \
-    'tun_tos 1/1' \
-    'tun_ttl 1/1' \
-    'skb_priority 1/1' \
-    'eth_type 0x1234/0x1' \
-    'dl_vlan 9/0x1' \
-    'dl_vlan_pcp 6/0x1' \
-    'vlan_pcp 5/0x1' \
-    'mpls mpls_label 5/0x1' \
-    'mpls mpls_tc 1/0x1' \
-    'mpls mpls_bos 1/0x1' \
-    'ip nw_proto 1/1' \
-    'ipv6 nw_proto 1/1' \
-    'ip nw_tos 0xf0/0xf0' \
-    'ipv6 nw_tos 0xf0/0xf0' \
-    'ip ip_dscp 0x3c/0xf0' \
-    'ipv6 ip_dscp 0x3c/0xf0' \
-    'ip nw_ecn 1/1' \
-    'ipv6 nw_ecn 1/1' \
-    'ip nw_ttl 5/1' \
-    'ipv6 nw_ttl 5/1' \
-    'arp arp_op 0/1' \
-    'icmp icmp_type 1/1' \
-    'icmp icmp_code 2/1' \
-    'icmp6 icmpv6_code 2/1'
-do
-    set $test_case
-    if test $# = 3; then
-        prereq=$1, field=$2 value=$3
-    else
-        prereq= field=$1 value=$2
-    fi
-    AT_CHECK_UNQUOTED([ovs-ofctl parse-flow "$prereq$field=$value,actions=drop"], [1], [],
-[ovs-ofctl: $value: invalid mask for field $field
-])
-done
-AT_CLEANUP
-
-AT_SETUP([ovs-ofctl action inconsistency (OpenFlow 1.1)])
-AT_CHECK([ovs-ofctl --protocols OpenFlow11 add-flow br0 'ip actions=mod_tp_dst:1234'
-], [1], [stdout], [ovs-ofctl: none of the usable flow formats (OpenFlow10,NXM) is among the allowed flow formats (OpenFlow11)
-])
 AT_CLEANUP
 
 AT_SETUP([ovs-ofctl parse-flows (With Tunnel-Parameters)])
@@ -301,9 +78,9 @@ AT_CHECK([ovs-ofctl parse-flows flows.txt
 AT_CLEANUP
 
 
-AT_SETUP([ovs-ofctl parse-flows (skb_priority)])
+AT_SETUP([ovs-ofctl parse-flows (skb_mark and skb_priority)])
 AT_DATA([flows.txt], [[
-skb_priority=0x12341234,tcp,tp_src=123,actions=flood
+skb_mark=0x12345678,skb_priority=0x12341234,tcp,tp_src=123,actions=flood
 ]])
 
 AT_CHECK([ovs-ofctl parse-flows flows.txt
@@ -318,7 +95,6 @@ AT_DATA([flows.txt], [[
 # comment
 tcp,tp_src=123,actions=flood
 in_port=LOCAL dl_vlan=9 dl_src=00:0A:E4:25:6B:B0 actions=drop
-pkt_mark=0xbb,actions=set_field:0xaa->pkt_mark
 udp dl_vlan_pcp=7 idle_timeout=5 actions=strip_vlan output:0
 tcp,nw_src=192.168.0.3,tp_dst=80 actions=set_queue:37,output:1
 udp,nw_src=192.168.0.3,tp_dst=53 actions=pop_queue,output:1
@@ -342,7 +118,7 @@ actions=output:1,bundle_load(eth_src,0,hrw,ofport,NXM_NX_REG0[16..31],slaves:1),
 actions=resubmit:1,resubmit(2),resubmit(,3),resubmit(2,3)
 send_flow_rem,actions=output:1,output:NXM_NX_REG0[],output:2,output:NXM_NX_REG1[16..31],output:3
 check_overlap,actions=output:1,exit,output:2
-tcp,actions=fin_timeout(idle_timeout=5,hard_timeout=15)
+actions=fin_timeout(idle_timeout=5,hard_timeout=15)
 actions=controller(max_len=123,reason=invalid_ttl,id=555)
 actions=sample(probability=12345,collector_set_id=23456,obs_domain_id=34567,obs_point_id=45678)
 ]])
@@ -350,11 +126,10 @@ actions=sample(probability=12345,collector_set_id=23456,obs_domain_id=34567,obs_
 AT_CHECK([ovs-ofctl parse-flows flows.txt
 ], [0], [stdout])
 AT_CHECK([[sed 's/ (xid=0x[0-9a-fA-F]*)//' stdout]], [0],
-[[usable protocols: OXM,NXM+table_id,OXM-OpenFlow14
+[[usable protocols: OXM,NXM+table_id
 chosen protocol: NXM+table_id
 NXT_FLOW_MOD: ADD table:255 tcp,tp_src=123 actions=FLOOD
 NXT_FLOW_MOD: ADD table:255 in_port=LOCAL,dl_vlan=9,dl_src=00:0a:e4:25:6b:b0 actions=drop
-NXT_FLOW_MOD: ADD table:255 pkt_mark=0xbb actions=load:0xaa->NXM_NX_PKT_MARK[]
 NXT_FLOW_MOD: ADD table:255 udp,dl_vlan_pcp=7 idle:5 actions=strip_vlan,output:0
 NXT_FLOW_MOD: ADD table:255 tcp,nw_src=192.168.0.3,tp_dst=80 actions=set_queue:37,output:1
 NXT_FLOW_MOD: ADD table:255 udp,nw_src=192.168.0.3,tp_dst=53 actions=pop_queue,output:1
@@ -378,7 +153,7 @@ NXT_FLOW_MOD: ADD table:255 actions=output:1,bundle_load(eth_src,0,hrw,ofport,NX
 NXT_FLOW_MOD: ADD table:255 actions=resubmit:1,resubmit:2,resubmit(,3),resubmit(2,3)
 NXT_FLOW_MOD: ADD table:255 send_flow_rem actions=output:1,output:NXM_NX_REG0[],output:2,output:NXM_NX_REG1[16..31],output:3
 NXT_FLOW_MOD: ADD table:255 check_overlap actions=output:1,exit,output:2
-NXT_FLOW_MOD: ADD table:255 tcp actions=fin_timeout(idle_timeout=5,hard_timeout=15)
+NXT_FLOW_MOD: ADD table:255 actions=fin_timeout(idle_timeout=5,hard_timeout=15)
 NXT_FLOW_MOD: ADD table:255 actions=controller(reason=invalid_ttl,max_len=123,id=555)
 NXT_FLOW_MOD: ADD table:255 actions=sample(probability=12345,collector_set_id=23456,obs_domain_id=34567,obs_point_id=45678)
 ]])
@@ -418,7 +193,7 @@ actions=sample(probability=12345,collector_set_id=23456,obs_domain_id=34567,obs_
 ])
 AT_CHECK([ovs-ofctl -F nxm parse-flows flows.txt], [0], [stdout])
 AT_CHECK([[sed 's/ (xid=0x[0-9a-fA-F]*)//' stdout]], [0], [dnl
-usable protocols: NXM,OXM,OXM-OpenFlow14
+usable protocols: NXM,OXM
 chosen protocol: NXM-table_id
 NXT_FLOW_MOD: ADD tcp,tp_src=123 actions=FLOOD
 NXT_FLOW_MOD: ADD in_port=LOCAL,dl_vlan=9,dl_src=00:0a:e4:25:6b:b0 actions=drop
@@ -461,14 +236,12 @@ ipv6,ipv6_label=0x12345 actions=2
 ipv6,ipv6_src=2001:db8:3c4d:1:2:3:4:5 actions=3
 ipv6,ipv6_src=2001:db8:3c4d:1:2:3:4:5/64 actions=4
 ipv6,ipv6_dst=2001:db8:3c4d:1:2:3:4:5/127 actions=5
-tcp6,ipv6_src=2001:db8:3c4d:1::1,tp_dst=80 actions=drop
-udp6,ipv6_src=2001:db8:3c4d:1::3,tp_dst=53 actions=drop
-sctp6,ipv6_src=2001:db8:3c4d:1::5,tp_dst=309 actions=drop
+tcp6,ipv6_src=2001:db8:3c4d:1::1,tp_dst=80 actions=drop 
+udp6,ipv6_src=2001:db8:3c4d:1::3,tp_dst=53 actions=drop 
 in_port=3 icmp6,ipv6_src=2001:db8:3c4d:1::1,icmp_type=134 actions=drop
 udp dl_vlan_pcp=7 idle_timeout=5 actions=strip_vlan output:0
 tcp,nw_src=192.168.0.3,tp_dst=80 actions=set_queue:37,output:1
 udp,nw_src=192.168.0.3,tp_dst=53 actions=pop_queue,output:1
-sctp,nw_src=192.168.0.3,tp_dst=309 actions=pop_queue,output:1
 icmp6,icmp_type=135,nd_target=FEC0::1234:F045:8FFF:1111:FE4E:0571 actions=drop
 icmp6,icmp_type=135,nd_sll=00:0A:E4:25:6B:B0 actions=drop
 icmp6,icmp_type=136,nd_target=FEC0::1234:F045:8FFF:1111:FE4E:0571,nd_tll=00:0A:E4:25:6B:B1 actions=drop
@@ -484,7 +257,7 @@ actions=sample(probability=12345,collector_set_id=23456,obs_domain_id=34567,obs_
 ]])
 AT_CHECK([ovs-ofctl -F nxm -mmm parse-flows flows.txt], [0], [stdout], [stderr])
 AT_CHECK([[sed 's/ (xid=0x[0-9a-fA-F]*)//' stdout]], [0],
-[[usable protocols: NXM,OXM,OXM-OpenFlow14
+[[usable protocols: NXM,OXM
 chosen protocol: NXM-table_id
 NXT_FLOW_MOD: ADD NXM_OF_ETH_TYPE(0800), NXM_OF_IP_PROTO(06), NXM_OF_TCP_SRC(007b) actions=FLOOD
 NXT_FLOW_MOD: ADD NXM_OF_IN_PORT(fffe), NXM_OF_ETH_SRC(000ae4256bb0), NXM_OF_VLAN_TCI_W(1009/1fff) actions=drop
@@ -495,12 +268,10 @@ NXT_FLOW_MOD: ADD NXM_OF_ETH_TYPE(86dd), NXM_NX_IPV6_SRC_W(20010db83c4d000100000
 NXT_FLOW_MOD: ADD NXM_OF_ETH_TYPE(86dd), NXM_NX_IPV6_DST_W(20010db83c4d00010002000300040004/fffffffffffffffffffffffffffffffe) actions=output:5
 NXT_FLOW_MOD: ADD NXM_OF_ETH_TYPE(86dd), NXM_NX_IPV6_SRC(20010db83c4d00010000000000000001), NXM_OF_IP_PROTO(06), NXM_OF_TCP_DST(0050) actions=drop
 NXT_FLOW_MOD: ADD NXM_OF_ETH_TYPE(86dd), NXM_NX_IPV6_SRC(20010db83c4d00010000000000000003), NXM_OF_IP_PROTO(11), NXM_OF_UDP_DST(0035) actions=drop
-NXT_FLOW_MOD: ADD NXM_OF_ETH_TYPE(86dd), NXM_NX_IPV6_SRC(20010db83c4d00010000000000000005), NXM_OF_IP_PROTO(84), OXM_OF_SCTP_DST(0135) actions=drop
 NXT_FLOW_MOD: ADD NXM_OF_IN_PORT(0003), NXM_OF_ETH_TYPE(86dd), NXM_NX_IPV6_SRC(20010db83c4d00010000000000000001), NXM_OF_IP_PROTO(3a), NXM_NX_ICMPV6_TYPE(86) actions=drop
 NXT_FLOW_MOD: ADD NXM_OF_ETH_TYPE(0800), NXM_OF_VLAN_TCI_W(f000/f000), NXM_OF_IP_PROTO(11) idle:5 actions=strip_vlan,output:0
 NXT_FLOW_MOD: ADD NXM_OF_ETH_TYPE(0800), NXM_OF_IP_SRC(c0a80003), NXM_OF_IP_PROTO(06), NXM_OF_TCP_DST(0050) actions=set_queue:37,output:1
 NXT_FLOW_MOD: ADD NXM_OF_ETH_TYPE(0800), NXM_OF_IP_SRC(c0a80003), NXM_OF_IP_PROTO(11), NXM_OF_UDP_DST(0035) actions=pop_queue,output:1
-NXT_FLOW_MOD: ADD NXM_OF_ETH_TYPE(0800), NXM_OF_IP_SRC(c0a80003), NXM_OF_IP_PROTO(84), OXM_OF_SCTP_DST(0135) actions=pop_queue,output:1
 NXT_FLOW_MOD: ADD NXM_OF_ETH_TYPE(86dd), NXM_OF_IP_PROTO(3a), NXM_NX_ICMPV6_TYPE(87), NXM_NX_ND_TARGET(fec000001234f0458fff1111fe4e0571) actions=drop
 NXT_FLOW_MOD: ADD NXM_OF_ETH_TYPE(86dd), NXM_OF_IP_PROTO(3a), NXM_NX_ICMPV6_TYPE(87), NXM_NX_ND_SLL(000ae4256bb0) actions=drop
 NXT_FLOW_MOD: ADD NXM_OF_ETH_TYPE(86dd), NXM_OF_IP_PROTO(3a), NXM_NX_ICMPV6_TYPE(88), NXM_NX_ND_TARGET(fec000001234f0458fff1111fe4e0571), NXM_NX_ND_TLL(000ae4256bb1) actions=drop
@@ -608,13 +379,6 @@ NXM_OF_ETH_TYPE(0800) NXM_OF_IP_PROTO(06) NXM_OF_TCP_DST_W(FDE0/FFF0)
 NXM_OF_ETH_TYPE(0800) NXM_OF_IP_PROTO(06) NXM_OF_TCP_DST_W(FDE0/ffff)
 NXM_OF_ETH_TYPE(0800) NXM_OF_IP_PROTO(06) NXM_OF_TCP_DST_W(FDE0/0000)
 NXM_OF_ETH_TYPE(0800) NXM_OF_IP_PROTO(07) NXM_OF_TCP_DST(4231)
-
-# TCP flags
-NXM_OF_ETH_TYPE(0800) NXM_OF_IP_PROTO(06) NXM_NX_TCP_FLAGS(0131)
-NXM_OF_ETH_TYPE(0800) NXM_OF_IP_PROTO(06) NXM_NX_TCP_FLAGS_W(00F0/0FF0)
-NXM_OF_ETH_TYPE(0800) NXM_OF_IP_PROTO(06) NXM_NX_TCP_FLAGS_W(01E2/ffff)
-NXM_OF_ETH_TYPE(0800) NXM_OF_IP_PROTO(06) NXM_NX_TCP_FLAGS_W(00E1/0000)
-NXM_OF_ETH_TYPE(0800) NXM_OF_IP_PROTO(07) NXM_NX_TCP_FLAGS(4321)
 
 # UDP source port
 NXM_OF_ETH_TYPE(0800) NXM_OF_IP_PROTO(11) NXM_OF_UDP_SRC(8732)
@@ -900,13 +664,6 @@ nx_pull_match() returned error OFPBMC_BAD_PREREQ
 NXM_OF_ETH_TYPE(0800), NXM_OF_IP_PROTO(06), NXM_OF_TCP_DST(4231)
 NXM_OF_ETH_TYPE(0800), NXM_OF_IP_PROTO(06), NXM_OF_TCP_DST_W(fde0/fff0)
 NXM_OF_ETH_TYPE(0800), NXM_OF_IP_PROTO(06), NXM_OF_TCP_DST(fde0)
-NXM_OF_ETH_TYPE(0800), NXM_OF_IP_PROTO(06)
-nx_pull_match() returned error OFPBMC_BAD_PREREQ
-
-# TCP flags
-NXM_OF_ETH_TYPE(0800), NXM_OF_IP_PROTO(06), NXM_NX_TCP_FLAGS(0131)
-NXM_OF_ETH_TYPE(0800), NXM_OF_IP_PROTO(06), NXM_NX_TCP_FLAGS_W(00f0/0ff0)
-NXM_OF_ETH_TYPE(0800), NXM_OF_IP_PROTO(06), NXM_NX_TCP_FLAGS(01e2)
 NXM_OF_ETH_TYPE(0800), NXM_OF_IP_PROTO(06)
 nx_pull_match() returned error OFPBMC_BAD_PREREQ
 
@@ -1284,14 +1041,6 @@ xxxxxxxx xxxxxxxx 01bb xxxx
 0038204f xxxx xxxxxxxxxxxx xxxxxxxxxxxx xxxx xx xx 0800 xx 11 xxxx dnl
 xxxxxxxx xxxxxxxx xxxx 01bb
 
-# sctp,tp_src=443
-0038208f xxxx xxxxxxxxxxxx xxxxxxxxxxxx xxxx xx xx 0800 xx 84 xxxx dnl
-xxxxxxxx xxxxxxxx 01bb xxxx
-
-# sctp,tp_dst=443
-0038204f xxxx xxxxxxxxxxxx xxxxxxxxxxxx xxxx xx xx 0800 xx 84 xxxx dnl
-xxxxxxxx xxxxxxxx xxxx 01bb
-
 # icmp,icmp_type=5
 0038208f xxxx xxxxxxxxxxxx xxxxxxxxxxxx xxxx xx xx 0800 xx 01 xxxx dnl
 xxxxxxxx xxxxxxxx 0005 xxxx
@@ -1300,7 +1049,7 @@ xxxxxxxx xxxxxxxx 0005 xxxx
 0038204f xxxx xxxxxxxxxxxx xxxxxxxxxxxx xxxx xx xx 0800 xx 01 xxxx dnl
 xxxxxxxx xxxxxxxx xxxx 0008
 
-dnl Ignore tp_src if not TCP/UDP/SCTP:
+dnl Ignore tp_src if not TCP or UDP:
 # ip,nw_proto=21,tp_src=443
 # normal:  3: 8f -> cf
 # normal: 36: 01 -> 00
@@ -1311,7 +1060,7 @@ dnl Ignore tp_src if not TCP/UDP/SCTP:
 0038208f xxxx xxxxxxxxxxxx xxxxxxxxxxxx xxxx xx xx 0800 xx 15 xxxx dnl
 xxxxxxxx xxxxxxxx 01bb xxxx
 
-dnl Ignore tp_dst if not TCP/UDP/SCTP:
+dnl Ignore tp_dst if not TCP or UDP:
 # ip,nw_proto=21,tp_dst=443
 # normal:  3: 4f -> cf
 # normal: 38: 01 -> 00
@@ -1555,25 +1304,28 @@ dnl Try invalid TOS:
 0000 00 00 0800 00 11 00000000ffffffff 00000000ffffffff 0000 01bb dnl
 00000000 00 000000 0000000000000000ffffffffffffffff
 
-# sctp
+dnl SCTP, no ports.
+# ip,nw_proto=132
 0000 0058 00000000 000003d7 dnl
 000000000000ffffffffffff 000000000000ffffffffffff dnl
 0000 00 00 0800 00 84 00000000ffffffff 00000000ffffffff 0000 0000 dnl
 00000000 00 000000 0000000000000000ffffffffffffffff
 
-# sctp,tp_src=443
+dnl SCTP tp_src matching not supported:
+# bad ofp11_match: OFPBMC_BAD_FIELD
 0000 0058 00000000 00000397 dnl
 000000000000ffffffffffff 000000000000ffffffffffff dnl
 0000 00 00 0800 00 84 00000000ffffffff 00000000ffffffff 01bb 0000 dnl
 00000000 00 000000 0000000000000000ffffffffffffffff
 
-# sctp,tp_dst=443
+dnl SCTP tp_dst matching not supported:
+# bad ofp11_match: OFPBMC_BAD_FIELD
 0000 0058 00000000 00000357 dnl
 000000000000ffffffffffff 000000000000ffffffffffff dnl
 0000 00 00 0800 00 84 00000000ffffffff 00000000ffffffff 0000 01bb dnl
 00000000 00 000000 0000000000000000ffffffffffffffff
 
-dnl Ignore tp_src if not TCP/UDP/SCTP:
+dnl Ignore tp_src if not TCP or UDP or SCTP:
 # ip,nw_proto=21
 # 11: 97 -> d7
 # 60: 01 -> 00
@@ -1583,7 +1335,7 @@ dnl Ignore tp_src if not TCP/UDP/SCTP:
 0000 00 00 0800 00 15 00000000ffffffff 00000000ffffffff 01bb 0000 dnl
 00000000 00 000000 0000000000000000ffffffffffffffff
 
-dnl Ignore tp_dst if not TCP/UDP/SCTP:
+dnl Ignore tp_dst if not TCP or UDP or SCTP:
 # ip,nw_proto=22
 # 11: 57 -> d7
 # 62: 01 -> 00
@@ -1593,16 +1345,15 @@ dnl Ignore tp_dst if not TCP/UDP/SCTP:
 0000 00 00 0800 00 16 00000000ffffffff 00000000ffffffff 0000 01bb dnl
 00000000 00 000000 0000000000000000ffffffffffffffff
 
-# mpls,mpls_label=284280
-# 64: 12 -> 00
-# 65: 34 -> 04
+dnl mpls_label not yet supported:
+# bad ofp11_match: OFPBMC_BAD_TAG
 0000 0058 00000000 000002f7 dnl
 000000000000ffffffffffff 000000000000ffffffffffff dnl
 0000 00 00 8847 00 00 00000000ffffffff 00000000ffffffff 0000 0000 dnl
 12345678 00 000000 0000000000000000ffffffffffffffff
 
-# mplsm,mpls_tc=2
-# 68: 5a -> 02
+dnl mpls_tc not yet supported:
+# bad ofp11_match: OFPBMC_BAD_TAG
 0000 0058 00000000 000001f7 dnl
 000000000000ffffffffffff 000000000000ffffffffffff dnl
 0000 00 00 8848 00 00 00000000ffffffff 00000000ffffffff 0000 0000 dnl
@@ -1784,20 +1535,6 @@ OXM_OF_ETH_TYPE(0800) OXM_OF_IP_PROTO(11) OXM_OF_UDP_DST_W(5005/F00F)
 OXM_OF_ETH_TYPE(0800) OXM_OF_IP_PROTO(11) OXM_OF_UDP_DST_W(5005/FFFF)
 OXM_OF_ETH_TYPE(0800) OXM_OF_IP_PROTO(11) OXM_OF_UDP_DST_W(5005/0000)
 OXM_OF_ETH_TYPE(0800) OXM_OF_IP_PROTO(02) OXM_OF_UDP_DST(1293)
-
-# SCTP source port
-OXM_OF_ETH_TYPE(0800) OXM_OF_IP_PROTO(84) OXM_OF_SCTP_SRC(8732)
-OXM_OF_ETH_TYPE(0800) OXM_OF_IP_PROTO(84) OXM_OF_SCTP_SRC_W(0132/01FF)
-OXM_OF_ETH_TYPE(0800) OXM_OF_IP_PROTO(84) OXM_OF_SCTP_SRC_W(0132/FFFF)
-OXM_OF_ETH_TYPE(0800) OXM_OF_IP_PROTO(84) OXM_OF_SCTP_SRC_W(0132/0000)
-OXM_OF_ETH_TYPE(0800) OXM_OF_IP_PROTO(06) OXM_OF_SCTP_SRC(7823)
-
-# SCTP destination port
-OXM_OF_ETH_TYPE(0800) OXM_OF_IP_PROTO(84) OXM_OF_SCTP_DST(1782)
-OXM_OF_ETH_TYPE(0800) OXM_OF_IP_PROTO(84) OXM_OF_SCTP_DST_W(5005/F00F)
-OXM_OF_ETH_TYPE(0800) OXM_OF_IP_PROTO(84) OXM_OF_SCTP_DST_W(5005/FFFF)
-OXM_OF_ETH_TYPE(0800) OXM_OF_IP_PROTO(84) OXM_OF_SCTP_DST_W(5005/0000)
-OXM_OF_ETH_TYPE(0800) OXM_OF_IP_PROTO(02) OXM_OF_SCTP_DST(1293)
 
 # ICMP type
 OXM_OF_ETH_TYPE(0800) OXM_OF_IP_PROTO(01) OXM_OF_ICMPV4_TYPE(12)
@@ -1999,20 +1736,6 @@ OXM_OF_ETH_TYPE(0800), OXM_OF_IP_PROTO(11), OXM_OF_UDP_DST(1782)
 OXM_OF_ETH_TYPE(0800), OXM_OF_IP_PROTO(11), OXM_OF_UDP_DST_W(5005/f00f)
 OXM_OF_ETH_TYPE(0800), OXM_OF_IP_PROTO(11), OXM_OF_UDP_DST(5005)
 OXM_OF_ETH_TYPE(0800), OXM_OF_IP_PROTO(11)
-nx_pull_match() returned error OFPBMC_BAD_PREREQ
-
-# SCTP source port
-OXM_OF_ETH_TYPE(0800), OXM_OF_IP_PROTO(84), OXM_OF_SCTP_SRC(8732)
-OXM_OF_ETH_TYPE(0800), OXM_OF_IP_PROTO(84), OXM_OF_SCTP_SRC_W(0132/01ff)
-OXM_OF_ETH_TYPE(0800), OXM_OF_IP_PROTO(84), OXM_OF_SCTP_SRC(0132)
-OXM_OF_ETH_TYPE(0800), OXM_OF_IP_PROTO(84)
-nx_pull_match() returned error OFPBMC_BAD_PREREQ
-
-# SCTP destination port
-OXM_OF_ETH_TYPE(0800), OXM_OF_IP_PROTO(84), OXM_OF_SCTP_DST(1782)
-OXM_OF_ETH_TYPE(0800), OXM_OF_IP_PROTO(84), OXM_OF_SCTP_DST_W(5005/f00f)
-OXM_OF_ETH_TYPE(0800), OXM_OF_IP_PROTO(84), OXM_OF_SCTP_DST(5005)
-OXM_OF_ETH_TYPE(0800), OXM_OF_IP_PROTO(84)
 nx_pull_match() returned error OFPBMC_BAD_PREREQ
 
 # ICMP type
@@ -2233,10 +1956,10 @@ dnl Check that "-F openflow10" rejects a flow_mod with unsupported features,
 dnl such as tunnels and metadata.
 AT_SETUP([ovs-ofctl -F option and NXM features])
 AT_CHECK([ovs-ofctl -F openflow10 add-flow dummy tun_id=123,actions=drop],
-  [1], [], [ovs-ofctl: none of the usable flow formats (NXM,OXM,OXM-OpenFlow14) is among the allowed flow formats (OpenFlow10)
+  [1], [], [ovs-ofctl: none of the usable flow formats (NXM,OXM) is among the allowed flow formats (OpenFlow10)
 ])
 AT_CHECK([ovs-ofctl -F openflow10 add-flow dummy metadata=123,actions=drop],
-  [1], [], [ovs-ofctl: none of the usable flow formats (NXM,OXM,OpenFlow11,OXM-OpenFlow14) is among the allowed flow formats (OpenFlow10)
+  [1], [], [ovs-ofctl: none of the usable flow formats (NXM,OXM) is among the allowed flow formats (OpenFlow10)
 ])
 AT_CLEANUP
 
@@ -2271,7 +1994,7 @@ dnl can't be represented in OpenFlow 1.0.
 AT_SETUP([ovs-ofctl dump-flows rejects bad -F option])
 OVS_VSWITCHD_START
 AT_CHECK([ovs-ofctl -F openflow10 dump-flows unix:br0.mgmt reg0=0xabcdef], [1], [],
-  [ovs-ofctl: none of the usable flow formats (NXM,OXM,OXM-OpenFlow14) is among the allowed flow formats (OpenFlow10)
+  [ovs-ofctl: none of the usable flow formats (NXM,OXM) is among the allowed flow formats (OpenFlow10)
 ])
 OVS_VSWITCHD_STOP
 AT_CLEANUP
@@ -2446,85 +2169,4 @@ AT_CHECK([ovs-ofctl -F oxm -O openflow12], [1], [],
 AT_CHECK([ovs-ofctl -F oxm -O openflow13], [1], [],
   [ovs-ofctl: missing command name; use --help for help
 ])
-AT_CLEANUP
-
-AT_SETUP([ovs-ofctl ofp-parse])
-# Test the echo request/reply messages (0 payload).
-AT_CHECK([printf '\1\2\0\10\0\0\0\0\1\3\0\10\0\0\0\0' > binary_ofp_msg])
-AT_CHECK([ovs-ofctl ofp-parse binary_ofp_msg], [0], [dnl
-OFPT_ECHO_REQUEST (xid=0x0): 0 bytes of payload
-OFPT_ECHO_REPLY (xid=0x0): 0 bytes of payload
-])
-
-# Test the hello (xid:1 3-byte payload).
-AT_CHECK([printf '\1\0\0\13\0\0\0\1\101\102\103' > binary_ofp_msg])
-AT_CHECK([ovs-ofctl ofp-parse - < binary_ofp_msg], [0], [dnl
-OFPT_HELLO (xid=0x1):
- version bitmap: 0x01
- unknown data in hello:
-00000000  01 00 00 0b 00 00 00 01-41 42 43                |........ABC     |
-])
-AT_CLEANUP
-
-AT_SETUP([tcp flags - filtering])
-OVS_VSWITCHD_START([add-port br0 p1 -- set Interface p1 type=dummy ofport_request=1 \
-                    -- add-port br0 p2 -- set Interface p2 type=dummy ofport_request=2])
-AT_DATA([flows.txt], [dnl
-	in_port=1,tcp,tp_dst=80,tcp_flags=+syn-rst-ack-fin,action=2  # Allow outbound web traffic bare-SYN
-	in_port=1,tcp,tp_dst=80,tcp_flags=+ack,action=2  # Allow outbound web traffic with ACK bit
-	in_port=1,tcp,tp_dst=80,tcp_flags=+rst,action=2  # Allow outbound web traffic with RST bit
-	in_port=2,tcp,tp_src=80,tcp_flags=+ack,action=1  # Allow inbound web traffic with ACK bit
-	in_port=2,tcp,tp_src=80,tcp_flags=+rst,action=1  # Allow inbound web traffic with RST bit
-	priority=0,in_port=1,action=drop  # Default drop outbound
-	priority=0,in_port=2,action=drop  # Default drop inbound
-])
-
-AT_CHECK([ovs-ofctl add-flows br0 flows.txt])
-
-AT_CHECK([ovs-ofctl add-flow br0 "tcp,tcp_flags=+ack-ack,action="], [1], [],
-  [ovs-ofctl: ack: Each TCP flag can be specified only once
-])
-
-AT_CHECK([ovs-appctl dpif/show | tail -n +4], [0], [dnl
-		p1 1/1: (dummy)
-		p2 2/2: (dummy)
-])
-
-dnl Outbound web traffic with bare-SYN
-AT_CHECK([ovs-appctl ofproto/trace ovs-dummy 'in_port(1),eth(src=50:54:00:00:00:05,dst=50:54:00:00:00:07),eth_type(0x0800),ipv4(src=192.168.0.1,dst=192.168.0.2,proto=6,tos=0,ttl=64,frag=no),tcp(src=8,dst=80),tcp_flags(0x002)'], [0], [stdout])
-AT_CHECK([tail -1 stdout], [0],
-  [Datapath actions: 2
-])
-
-dnl Outbopund web traffic with ACK bit
-AT_CHECK([ovs-appctl ofproto/trace ovs-dummy 'in_port(1),eth(src=50:54:00:00:00:05,dst=50:54:00:00:00:07),eth_type(0x0800),ipv4(src=192.168.0.1,dst=192.168.0.2,proto=6,tos=0,ttl=64,frag=no),tcp(src=8,dst=80),tcp_flags(0x110)'], [0], [stdout])
-AT_CHECK([tail -1 stdout], [0],
-  [Datapath actions: 2
-])
-
-dnl Outbound web traffic with RST bit
-AT_CHECK([ovs-appctl ofproto/trace ovs-dummy 'in_port(1),eth(src=50:54:00:00:00:05,dst=50:54:00:00:00:07),eth_type(0x0800),ipv4(src=192.168.0.1,dst=192.168.0.2,proto=6,tos=0,ttl=64,frag=no),tcp(src=8,dst=80),tcp_flags(0x104)'], [0], [stdout])
-AT_CHECK([tail -1 stdout], [0],
-  [Datapath actions: 2
-])
-
-dnl Inbound web traffic with ACK bit
-AT_CHECK([ovs-appctl ofproto/trace ovs-dummy 'in_port(2),eth(src=50:54:00:00:00:07,dst=50:54:00:00:00:05),eth_type(0x0800),ipv4(src=192.168.0.2,dst=192.168.0.1,proto=6,tos=0,ttl=64,frag=no),tcp(src=80,dst=8),tcp_flags(0x010)'], [0], [stdout])
-AT_CHECK([tail -1 stdout], [0],
-  [Datapath actions: 1
-])
-
-dnl Inbound web traffic with RST bit
-AT_CHECK([ovs-appctl ofproto/trace ovs-dummy 'in_port(2),eth(src=50:54:00:00:00:07,dst=50:54:00:00:00:05),eth_type(0x0800),ipv4(src=192.168.0.2,dst=192.168.0.1,proto=6,tos=0,ttl=64,frag=no),tcp(src=80,dst=8),tcp_flags(0x014)'], [0], [stdout])
-AT_CHECK([tail -1 stdout], [0],
-  [Datapath actions: 1
-])
-
-dnl Inbound web traffic with SYN bit without ACK or RST bits
-AT_CHECK([ovs-appctl ofproto/trace ovs-dummy 'in_port(2),eth(src=50:54:00:00:00:07,dst=50:54:00:00:00:05),eth_type(0x0800),ipv4(src=192.168.0.2,dst=192.168.0.1,proto=6,tos=0,ttl=64,frag=no),tcp(src=80,dst=8),tcp_flags(0xfeb)'], [0], [stdout])
-AT_CHECK([tail -1 stdout], [0],
-  [Datapath actions: drop
-])
-
-OVS_VSWITCHD_STOP
 AT_CLEANUP

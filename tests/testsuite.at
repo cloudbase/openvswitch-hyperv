@@ -53,14 +53,6 @@ m4_define([OVS_WAIT_UNTIL], [OVS_WAIT([$1], [$2])])
 m4_define([OVS_WAIT_WHILE],
   [OVS_WAIT([if $1; then return 1; else return 0; fi], [$2])])
 
-dnl OVS_APP_EXIT_AND_WAIT(DAEMON)
-dnl
-dnl Ask the daemon named DAEMON to exit, via ovs-appctl, and then waits for it
-dnl to exit.
-m4_define([OVS_APP_EXIT_AND_WAIT],
-  [ovs-appctl -t $1 exit
-   OVS_WAIT_WHILE([test -e $1.pid])])
-
 dnl ON_EXIT([COMMANDS])
 dnl
 dnl Adds the shell COMMANDS to a collection executed when the current test
@@ -75,7 +67,6 @@ EOF
 m4_include([tests/ovsdb-macros.at])
 m4_include([tests/ofproto-macros.at])
 
-m4_include([tests/bfd.at])
 m4_include([tests/cfm.at])
 m4_include([tests/lacp.at])
 m4_include([tests/library.at])
@@ -101,13 +92,13 @@ m4_include([tests/uuid.at])
 m4_include([tests/json.at])
 m4_include([tests/jsonrpc.at])
 m4_include([tests/jsonrpc-py.at])
+m4_include([tests/timeval.at])
 m4_include([tests/tunnel.at])
 m4_include([tests/lockfile.at])
 m4_include([tests/reconnect.at])
 m4_include([tests/ovs-vswitchd.at])
 m4_include([tests/ofproto.at])
 m4_include([tests/ofproto-dpif.at])
-m4_include([tests/vlan-splinters.at])
 m4_include([tests/ovsdb.at])
 m4_include([tests/ovs-vsctl.at])
 m4_include([tests/ovs-monitor-ipsec.at])
@@ -115,4 +106,3 @@ m4_include([tests/ovs-xapi-sync.at])
 m4_include([tests/interface-reconfigure.at])
 m4_include([tests/stp.at])
 m4_include([tests/vlog.at])
-m4_include([tests/vtep-ctl.at])
