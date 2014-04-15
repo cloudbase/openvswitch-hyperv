@@ -174,7 +174,9 @@ log_wakeup(const char *where, const struct pollfd *pollfd, int timeout)
     ds_init(&s);
     ds_put_cstr(&s, "wakeup due to ");
     if (pollfd) {
-        char *description = describe_fd(pollfd->fd);
+#ifndef _WIN32
+		char *description = describe_fd(pollfd->fd);
+#endif
         if (pollfd->revents & POLLIN) {
             ds_put_cstr(&s, "[POLLIN]");
         }
@@ -190,8 +192,10 @@ log_wakeup(const char *where, const struct pollfd *pollfd, int timeout)
         if (pollfd->revents & POLLNVAL) {
             ds_put_cstr(&s, "[POLLNVAL]");
         }
-        ds_put_format(&s, " on fd %d (%s)", pollfd->fd, description);
-        free(description);
+#ifndef _WIN32
+		ds_put_format(&s, " on fd %d (%s)", pollfd->fd, description);
+		free(description);
+#endif
     } else {
         ds_put_format(&s, "%d-ms timeout", timeout);
     }
