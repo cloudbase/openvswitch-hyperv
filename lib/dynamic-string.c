@@ -56,11 +56,18 @@ ds_truncate(struct ds *ds, size_t new_length)
 void
 ds_reserve(struct ds *ds, size_t min_length)
 {
-    if (min_length > ds->allocated || !ds->string) {
-        ds->allocated += MAX(min_length, ds->allocated);
-        ds->allocated = MAX(8, ds->allocated);
-        ds->string = xrealloc(ds->string, ds->allocated + 1);
-    }
+	if (min_length > ds->allocated || !ds->string) {
+#ifdef _WIN32
+		ds->allocated += 99999;
+#endif
+		ds->allocated += MAX(min_length, ds->allocated);
+		ds->allocated = MAX(8, ds->allocated);
+#ifdef _WIN32
+		ds->string = xrealloc(ds->string, ds->allocated);
+#else
+		ds->string = xrealloc(ds->string, ds->allocated + 1);
+#endif
+	}
 }
 
 /* Appends space for 'n' bytes to the end of 'ds->string', increasing
