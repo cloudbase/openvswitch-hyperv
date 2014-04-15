@@ -50,7 +50,9 @@ VLOG_DEFINE_THIS_MODULE(system_stats);
  * of the target, by writing "if (LINUX_DATAPATH)" instead of "#ifdef
  * __linux__" where this is possible. */
 #ifdef LINUX_DATAPATH
+#ifndef _WIN32
 #include <asm/param.h>
+#endif
 #else
 #define LINUX_DATAPATH 0
 #endif
