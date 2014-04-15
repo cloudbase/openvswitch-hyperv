@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008, 2009, 2010, 2012, 2013, 2014 Nicira, Inc.
+ * Copyright (c) 2008, 2009, 2010, 2012 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,7 +26,6 @@
 #include "ofpbuf.h"
 #include "packets.h"
 #include "vlog.h"
-#include "ovstest.h"
 
 struct bpdu {
     int port_no;
@@ -93,7 +92,7 @@ send_bpdu(struct ofpbuf *pkt, int port_no, void *b_)
     assert(port_no < b->n_ports);
     lan = b->ports[port_no];
     if (lan) {
-        const void *data = ofpbuf_l3(pkt);
+        const void *data = pkt->l3;
         size_t size = (char *) ofpbuf_tail(pkt) - (char *) data;
         int i;
 
@@ -326,7 +325,7 @@ err(const char *message, ...)
 {
     va_list args;
 
-    fprintf(stderr, "%s:%d:%"PRIdPTR": ", file_name, line_number, pos - line);
+    fprintf(stderr, "%s:%d:%td: ", file_name, line_number, pos - line);
     va_start(args, message);
     vfprintf(stderr, message, args);
     va_end(args);
@@ -435,8 +434,8 @@ must_match(const char *want)
     }
 }
 
-static void
-test_stp_main(int argc, char *argv[])
+int
+main(int argc, char *argv[])
 {
     struct test_case *tc;
     FILE *input_file;
@@ -662,10 +661,10 @@ test_stp_main(int argc, char *argv[])
     }
     for (i = 0; i < tc->n_bridges; i++) {
         struct bridge *bridge = tc->bridges[i];
-        stp_unref(bridge->stp);
+        stp_destroy(bridge->stp);
         free(bridge);
     }
     free(tc);
-}
 
-OVSTEST_REGISTER("test-stp", test_stp_main);
+    return 0;
+}

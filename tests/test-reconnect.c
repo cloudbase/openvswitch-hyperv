@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009, 2010, 2011, 2012, 2014 Nicira, Inc.
+ * Copyright (c) 2009, 2010, 2011, 2012 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,18 +28,18 @@
 #include "svec.h"
 #include "util.h"
 #include "vlog.h"
-#include "ovstest.h"
 
 static struct reconnect *reconnect;
 static int now;
 
+static const struct command commands[];
+
 static void diff_stats(const struct reconnect_stats *old,
                        const struct reconnect_stats *new,
                        int delta);
-static const struct command *get_all_commands(void);
 
-static void
-test_reconnect_main(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
+int
+main(void)
 {
     extern struct vlog_module VLM_reconnect;
     struct reconnect_stats prev;
@@ -69,7 +69,7 @@ test_reconnect_main(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
         svec_parse_words(&args, line);
         svec_terminate(&args);
         if (!svec_is_empty(&args)) {
-            run_command(args.n, args.names, get_all_commands());
+            run_command(args.n, args.names, commands);
         }
         svec_destroy(&args);
 
@@ -87,6 +87,8 @@ test_reconnect_main(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
 
         old_time = now;
     }
+
+    return 0;
 }
 
 static void
@@ -164,7 +166,7 @@ do_run(int argc, char *argv[])
     switch (action) {
     default:
         if (action != 0) {
-            OVS_NOT_REACHED();
+            NOT_REACHED();
         }
         break;
 
@@ -270,7 +272,7 @@ do_listen_error(int argc OVS_UNUSED, char *argv[])
     reconnect_listen_error(reconnect, now, atoi(argv[1]));
 }
 
-static const struct command all_commands[] = {
+static const struct command commands[] = {
     { "enable", 0, 0, do_enable },
     { "disable", 0, 0, do_disable },
     { "force-reconnect", 0, 0, do_force_reconnect },
@@ -288,11 +290,3 @@ static const struct command all_commands[] = {
     { "listen-error", 1, 1, do_listen_error },
     { NULL, 0, 0, NULL },
 };
-
-static const struct command *
-get_all_commands(void)
-{
-    return all_commands;
-}
-
-OVSTEST_REGISTER("test-reconnect", test_reconnect_main);

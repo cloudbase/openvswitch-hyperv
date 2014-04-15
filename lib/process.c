@@ -449,7 +449,7 @@ stream_read(struct stream *s)
                 break;
             }
         } else if (s->log.length > s->max_size) {
-            VLOG_WARN("subprocess output overflowed %zu-byte buffer",
+            VLOG_WARN("subprocess output overflowed %"PRIuSIZE"-byte buffer",
                       s->max_size);
             break;
         }

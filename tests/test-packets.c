@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2014 Nicira, Inc.
+ * Copyright (c) 2011 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,7 +19,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "ovstest.h"
 
 #undef NDEBUG
 #include <assert.h>
@@ -153,13 +152,13 @@ test_ipv6_masking(void)
     assert(ipv6_count_cidr_bits(&dest) == 128);
 }
 
-static void
-test_packets_main(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
+int
+main(void)
 {
     test_ipv4_cidr();
     test_ipv6_static_masks();
     test_ipv6_cidr();
     test_ipv6_masking();
-}
 
-OVSTEST_REGISTER("test-packets", test_packets_main);
+    return 0;
+}

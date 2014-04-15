@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012, 2013, 2014 Nicira, Inc.
+ * Copyright (c) 2011, 2012, 2013 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,7 +33,6 @@
 #include "unixctl.h"
 #include "util.h"
 #include "vlog.h"
-#include "ovstest.h"
 
 static void usage(void) NO_RETURN;
 static void parse_options(int argc, char *argv[]);
@@ -101,11 +100,6 @@ print_netflow(struct ofpbuf *buf)
                    ntohs(rec->src_port), ntohs(rec->dst_port));
             break;
 
-        case IPPROTO_SCTP:
-            printf(", SCTP %"PRIu16" > %"PRIu16,
-                   ntohs(rec->src_port), ntohs(rec->dst_port));
-            break;
-
         case IPPROTO_ICMP:
             printf(", ICMP %"PRIu16":%"PRIu16,
                    ntohs(rec->dst_port) >> 8,
@@ -126,7 +120,6 @@ print_netflow(struct ofpbuf *buf)
 
         if (rec->ip_proto != IPPROTO_TCP &&
             rec->ip_proto != IPPROTO_UDP &&
-            rec->ip_proto != IPPROTO_SCTP &&
             rec->ip_proto != IPPROTO_ICMP) {
             if (rec->src_port != htons(0)) {
                 printf(", src_port %"PRIu16, ntohs(rec->src_port));
@@ -162,13 +155,13 @@ print_netflow(struct ofpbuf *buf)
         putchar('\n');
     }
 
-    if (ofpbuf_size(buf)) {
-        printf("%"PRIu32" extra bytes after last record\n", ofpbuf_size(buf));
+    if (buf->size) {
+        printf("%zu extra bytes after last record\n", buf->size);
     }
 }
 
-static void
-test_netflow_main(int argc, char *argv[])
+int
+main(int argc, char *argv[])
 {
     struct unixctl_server *server;
     enum { MAX_RECV = 1500 };
@@ -191,7 +184,7 @@ test_netflow_main(int argc, char *argv[])
 
     sock = inet_open_passive(SOCK_DGRAM, target, 0, NULL, 0);
     if (sock < 0) {
-        ovs_fatal(0, "%s: failed to open (%s)", argv[1], ovs_strerror(-sock));
+        ovs_fatal(0, "%s: failed to open (%s)", argv[1], strerror(-sock));
     }
 
     daemon_save_fd(STDOUT_FILENO);
@@ -214,7 +207,7 @@ test_netflow_main(int argc, char *argv[])
 
         ofpbuf_clear(&buf);
         do {
-            retval = read(sock, ofpbuf_data(&buf), buf.allocated);
+            retval = read(sock, buf.data, buf.allocated);
         } while (retval < 0 && errno == EINTR);
         if (retval > 0) {
             ofpbuf_put_uninit(&buf, retval);
@@ -233,6 +226,8 @@ test_netflow_main(int argc, char *argv[])
         unixctl_server_wait(server);
         poll_block();
     }
+
+    return 0;
 }
 
 static void
@@ -242,7 +237,7 @@ parse_options(int argc, char *argv[])
         DAEMON_OPTION_ENUMS,
         VLOG_OPTION_ENUMS
     };
-    static const struct option long_options[] = {
+    static struct option long_options[] = {
         {"help", no_argument, NULL, 'h'},
         DAEMON_LONG_OPTIONS,
         VLOG_LONG_OPTIONS,
@@ -297,5 +292,3 @@ test_netflow_exit(struct unixctl_conn *conn,
     *exiting = true;
     unixctl_command_reply(conn, NULL);
 }
-
-OVSTEST_REGISTER("test-netflow", test_netflow_main);

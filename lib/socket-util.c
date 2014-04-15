@@ -941,7 +941,7 @@ getsockopt_int(int fd, int level, int option, const char *optname, int *valuep)
         VLOG_ERR_RL(&rl, "getsockopt(%s): %s", optname, strerror(error));
     } else if (len != sizeof value) {
         error = EINVAL;
-        VLOG_ERR_RL(&rl, "getsockopt(%s): value is %u bytes (expected %zu)",
+        VLOG_ERR_RL(&rl, "getsockopt(%s): value is %u bytes (expected %"PRIuSIZE")",
                     optname, (unsigned int) len, sizeof value);
     } else {
         error = 0;
@@ -1366,7 +1366,7 @@ recv_data_and_fds(int sock,
 
             ovs_assert(n_fds > 0);
             if (n_fds > SOUTIL_MAX_FDS) {
-                VLOG_ERR("%zu fds received but only %d supported",
+                VLOG_ERR("%"PRIuSIZE" fds received but only %d supported",
                          n_fds, SOUTIL_MAX_FDS);
                 for (i = 0; i < n_fds; i++) {
                     close(fds_data[i]);

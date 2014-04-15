@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009, 2010, 2011, 2012, 2014 Nicira, Inc.
+ * Copyright (c) 2009, 2010, 2011, 2012 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,14 +28,13 @@
 #include "timeval.h"
 #include "util.h"
 #include "vlog.h"
-#include "ovstest.h"
 
 struct test {
     const char *name;
     void (*function)(void);
 };
 
-static void run_help(void);
+static const struct test tests[];
 
 #define CHECK(A, B) check(A, B, #A, #B, __FILE__, __LINE__)
 static void
@@ -97,6 +96,7 @@ do_fork(void)
 {
     switch (fork()) {
     case 0:
+        time_postfork();
         lockfile_postfork();
         return CHILD;
 
@@ -237,6 +237,19 @@ run_lock_symlink_to_dir(void)
     lockfile_unlock(a);
 }
 
+static void
+run_help(void)
+{
+    size_t i;
+
+    printf("usage: %s TESTNAME\n"
+           "where TESTNAME is one of the following:\n",
+           program_name);
+    for (i = 0; tests[i].name; i++) {
+        fprintf(stderr, "\t%s\n", tests[i].name);
+    }
+}
+
 static const struct test tests[] = {
 #define TEST(NAME) { #NAME, run_##NAME }
     TEST(lock_and_unlock),
@@ -254,21 +267,8 @@ static const struct test tests[] = {
 #undef TEST
 };
 
-static void
-run_help(void)
-{
-    size_t i;
-
-    printf("usage: %s TESTNAME\n"
-           "where TESTNAME is one of the following:\n",
-           program_name);
-    for (i = 0; tests[i].name; i++) {
-        fprintf(stderr, "\t%s\n", tests[i].name);
-    }
-}
-
-static void
-test_lockfile_main(int argc, char *argv[])
+int
+main(int argc, char *argv[])
 {
     size_t i;
 
@@ -279,6 +279,7 @@ test_lockfile_main(int argc, char *argv[])
     if (argc != 2) {
         ovs_fatal(0, "exactly one argument required; use \"%s help\" for help",
                   program_name);
+        return 1;
     }
 
     for (i = 0; tests[i].name; i++) {
@@ -310,4 +311,3 @@ test_lockfile_main(int argc, char *argv[])
               argv[1], program_name);
 }
 
-OVSTEST_REGISTER("test-lockfile", test_lockfile_main);

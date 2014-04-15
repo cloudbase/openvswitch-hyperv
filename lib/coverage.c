@@ -222,7 +222,7 @@ coverage_read(struct svec *lines)
             }
         }
     }
-    svec_add_nocopy(lines, xasprintf("%zu events never hit", n_never_hit));
+    svec_add_nocopy(lines, xasprintf("%"PRIuSIZE" events never hit", n_never_hit));
 }
 
 /* Advances to the next epoch of coverage, resetting all the counters to 0. */

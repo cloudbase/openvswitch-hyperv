@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009, 2010, 2011, 2014 Nicira, Inc.
+ * Copyright (c) 2009, 2010, 2011 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,6 @@
 
 #include <config.h>
 #include "csum.h"
-#include "crc32c.h"
 #include <inttypes.h>
 #include <netinet/in.h>
 #include <stdio.h>
@@ -25,7 +24,6 @@
 #include "random.h"
 #include "unaligned.h"
 #include "util.h"
-#include "ovstest.h"
 
 #undef NDEBUG
 #include <assert.h>
@@ -96,12 +94,9 @@ static void
 test_rfc1624(void)
 {
     /* "...an IP packet header in which a 16-bit field m = 0x5555..." */
-    uint8_t data[32] = {
-        0xfe, 0x8f, 0xc1, 0x14, 0x4b, 0x6f, 0x70, 0x2a,
-        0x80, 0x29, 0x78, 0xc0, 0x58, 0x81, 0x77, 0xaa,
-        0x66, 0x64, 0xfc, 0x96, 0x63, 0x97, 0x64, 0xee,
-        0x12, 0x53, 0x1d, 0xa9, 0x2d, 0xa9, 0x55, 0x55
-    };
+    uint8_t data[32] =
+        "\xfe\x8f\xc1\x14\x4b\x6f\x70\x2a\x80\x29\x78\xc0\x58\x81\x77\xaa"
+        "\x66\x64\xfc\x96\x63\x97\x64\xee\x12\x53\x1d\xa9\x2d\xa9\x55\x55";
 
     /* "...the one's complement sum of all other header octets is 0xCD7A." */
     assert(ntohs(csum(data, sizeof data - 2)) == 0xffff - 0xcd7a);
@@ -138,47 +133,8 @@ test_rfc1624(void)
     mark('#');
 }
 
-/* CRC32C checksum tests, based on Intel IPPs, Chapter 13,
- * ippsCRC32C_8u() example, found at the following location:
- * http://software.intel.com/sites/products/documentation/hpc/ipp/ipps/ */
-static void
-test_crc32c(void)
-{
-    int i;
-    uint8_t data[48] = {
-        0x01, 0xc0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00,
-        0x00, 0x00, 0x00, 0x14, 0x00, 0x00, 0x00, 0x18,
-        0x28, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
-    };
-
-    /* iSCSI Read PDU */
-    assert(ntohl(crc32c(data, 48)) == 0x563a96d9L);
-
-    /* 32 bytes of all zeroes */
-    for (i = 0; i < 32; i++) data[i] = 0x00;
-    assert(ntohl(crc32c(data, 32)) == 0xaa36918aL);
-
-    /* 32 bytes of all ones */
-    for (i = 0; i < 32; i++) data[i] = 0xff;
-    assert(ntohl(crc32c(data, 32)) == 0x43aba862L);
-
-    /* 32 bytes of incrementing 00..1f */
-    for (i = 0; i < 32; i++) data[i] = i;
-    assert(ntohl(crc32c(data, 32)) == 0x4e79dd46L);
-
-    /* 32 bytes of decrementing 1f..00 */
-    for (i  = 0; i < 32; i++) data[i] = 31 - i;
-    assert(ntohl(crc32c(data, 32)) == 0x5cdb3f11L);
-
-    mark('#');
-}
-
-
-static void
-test_csum_main(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
+int
+main(void)
 {
     const struct test_case *tc;
     int i;
@@ -239,7 +195,6 @@ test_csum_main(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
     }
 
     test_rfc1624();
-    test_crc32c();
 
     /* Test recalc_csum16(). */
     for (i = 0; i < 32; i++) {
@@ -282,6 +237,6 @@ test_csum_main(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
     mark('#');
 
     putchar('\n');
-}
 
-OVSTEST_REGISTER("test-csum", test_csum_main);
+    return 0;
+}

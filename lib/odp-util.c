@@ -380,7 +380,7 @@ format_odp_action(struct ds *ds, const struct nlattr *a)
 
     expected_len = odp_action_len(nl_attr_type(a));
     if (expected_len != -2 && nl_attr_get_size(a) != expected_len) {
-        ds_put_format(ds, "bad length %zu, expected %d for: ",
+        ds_put_format(ds, "bad length %"PRIuSIZE", expected %d for: ",
                       nl_attr_get_size(a), expected_len);
         format_generic_odp_action(ds, a);
         return;
@@ -945,14 +945,14 @@ format_odp_key_attr(const struct nlattr *a, const struct nlattr *ma,
 
             if (bad_key_len || bad_mask_len) {
                 if (bad_key_len) {
-                    ds_put_format(ds, "(bad key length %zu, expected %d)(",
+                    ds_put_format(ds, "(bad key length %"PRIuSIZE", expected %d)(",
                                   nl_attr_get_size(a),
                                   odp_flow_key_attr_len(nl_attr_type(a)));
                 }
                 format_generic_odp_key(a, ds);
                 if (bad_mask_len) {
                     ds_put_char(ds, '/');
-                    ds_put_format(ds, "(bad mask length %zu, expected %d)(",
+                    ds_put_format(ds, "(bad mask length %"PRIuSIZE", expected %d)(",
                                   nl_attr_get_size(ma),
                                   odp_flow_key_attr_len(nl_attr_type(ma)));
                 }
@@ -2590,7 +2590,7 @@ parse_flow_nlattrs(const struct nlattr *key, size_t key_len,
         int expected_len = odp_flow_key_attr_len(type);
 
         if (len != expected_len && expected_len >= 0) {
-            VLOG_ERR_RL(&rl, "attribute %s has length %zu but should have "
+            VLOG_ERR_RL(&rl, "attribute %s has length %"PRIuSIZE" but should have "
                         "length %d", ovs_key_attr_to_string(type),
                         len, expected_len);
             return false;

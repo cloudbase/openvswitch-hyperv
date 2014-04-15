@@ -2003,7 +2003,7 @@ ofputil_decode_flow_stats_reply(struct ofputil_flow_stats *fs,
 
         ofs = ofpbuf_try_pull(msg, sizeof *ofs);
         if (!ofs) {
-            VLOG_WARN_RL(&bad_ofmsg_rl, "OFPST_FLOW reply has %zu leftover "
+            VLOG_WARN_RL(&bad_ofmsg_rl, "OFPST_FLOW reply has %"PRIuSIZE" leftover "
                          "bytes at end", msg->size);
             return EINVAL;
         }
@@ -2011,7 +2011,7 @@ ofputil_decode_flow_stats_reply(struct ofputil_flow_stats *fs,
         length = ntohs(ofs->length);
         if (length < sizeof *ofs) {
             VLOG_WARN_RL(&bad_ofmsg_rl, "OFPST_FLOW reply claims invalid "
-                         "length %zu", length);
+                         "length %"PRIuSIZE"", length);
             return EINVAL;
         }
 
@@ -2044,7 +2044,7 @@ ofputil_decode_flow_stats_reply(struct ofputil_flow_stats *fs,
 
         ofs = ofpbuf_try_pull(msg, sizeof *ofs);
         if (!ofs) {
-            VLOG_WARN_RL(&bad_ofmsg_rl, "OFPST_FLOW reply has %zu leftover "
+            VLOG_WARN_RL(&bad_ofmsg_rl, "OFPST_FLOW reply has %"PRIuSIZE" leftover "
                          "bytes at end", msg->size);
             return EINVAL;
         }
@@ -2052,7 +2052,7 @@ ofputil_decode_flow_stats_reply(struct ofputil_flow_stats *fs,
         length = ntohs(ofs->length);
         if (length < sizeof *ofs) {
             VLOG_WARN_RL(&bad_ofmsg_rl, "OFPST_FLOW reply claims invalid "
-                         "length %zu", length);
+                         "length %"PRIuSIZE"", length);
             return EINVAL;
         }
 
@@ -2079,7 +2079,7 @@ ofputil_decode_flow_stats_reply(struct ofputil_flow_stats *fs,
 
         nfs = ofpbuf_try_pull(msg, sizeof *nfs);
         if (!nfs) {
-            VLOG_WARN_RL(&bad_ofmsg_rl, "NXST_FLOW reply has %zu leftover "
+            VLOG_WARN_RL(&bad_ofmsg_rl, "NXST_FLOW reply has %"PRIuSIZE" leftover "
                          "bytes at end", msg->size);
             return EINVAL;
         }
@@ -2087,8 +2087,8 @@ ofputil_decode_flow_stats_reply(struct ofputil_flow_stats *fs,
         length = ntohs(nfs->length);
         match_len = ntohs(nfs->match_len);
         if (length < sizeof *nfs + ROUND_UP(match_len, 8)) {
-            VLOG_WARN_RL(&bad_ofmsg_rl, "NXST_FLOW reply with match_len=%zu "
-                         "claims invalid length %zu", match_len, length);
+            VLOG_WARN_RL(&bad_ofmsg_rl, "NXST_FLOW reply with match_len=%"PRIuSIZE" "
+                         "claims invalid length %"PRIuSIZE"", match_len, length);
             return EINVAL;
         }
         if (nx_pull_match(msg, match_len, &fs->match, NULL, NULL)) {
@@ -3660,7 +3660,7 @@ ofputil_decode_flow_monitor_request(struct ofputil_flow_monitor_request *rq,
 
     nfmr = ofpbuf_try_pull(msg, sizeof *nfmr);
     if (!nfmr) {
-        VLOG_WARN_RL(&bad_ofmsg_rl, "NXST_FLOW_MONITOR request has %zu "
+        VLOG_WARN_RL(&bad_ofmsg_rl, "NXST_FLOW_MONITOR request has %"PRIuSIZE" "
                      "leftover bytes at end", msg->size);
         return OFPERR_OFPBRC_BAD_LEN;
     }
@@ -3810,7 +3810,7 @@ ofputil_decode_flow_update(struct ofputil_flow_update *update,
     }
 
 bad_len:
-    VLOG_WARN_RL(&bad_ofmsg_rl, "NXST_FLOW_MONITOR reply has %zu "
+    VLOG_WARN_RL(&bad_ofmsg_rl, "NXST_FLOW_MONITOR reply has %"PRIuSIZE" "
                  "leftover bytes at end", msg->size);
     return OFPERR_OFPBRC_BAD_LEN;
 }
@@ -4769,7 +4769,7 @@ ofputil_decode_port_stats(struct ofputil_port_stats *ps, struct ofpbuf *msg)
     }
 
  bad_len:
-    VLOG_WARN_RL(&bad_ofmsg_rl, "OFPST_PORT reply has %zu leftover "
+    VLOG_WARN_RL(&bad_ofmsg_rl, "OFPST_PORT reply has %"PRIuSIZE" leftover "
                  "bytes at end", msg->size);
     return OFPERR_OFPBRC_BAD_LEN;
 }
@@ -4983,7 +4983,7 @@ ofputil_decode_queue_stats(struct ofputil_queue_stats *qs, struct ofpbuf *msg)
     }
 
  bad_len:
-    VLOG_WARN_RL(&bad_ofmsg_rl, "OFPST_QUEUE reply has %zu leftover "
+    VLOG_WARN_RL(&bad_ofmsg_rl, "OFPST_QUEUE reply has %"PRIuSIZE" leftover "
                  "bytes at end", msg->size);
     return OFPERR_OFPBRC_BAD_LEN;
 }

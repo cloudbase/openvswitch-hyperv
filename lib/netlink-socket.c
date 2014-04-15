@@ -383,7 +383,7 @@ printf("~~~~~~~~~~~~ sunt in netlink_recv retval = %d\n", retval);
     }
 
     if (msg.msg_flags & MSG_TRUNC) {
-        VLOG_ERR_RL(&rl, "truncated message (longer than %zu bytes)",
+        VLOG_ERR_RL(&rl, "truncated message (longer than %"PRIuSIZE" bytes)",
                     sizeof tail);
         return E2BIG;
     }
@@ -392,7 +392,7 @@ printf("~~~~~~~~~~~~ sunt in netlink_recv retval = %d\n", retval);
     if (retval < sizeof *nlmsghdr
         || nlmsghdr->nlmsg_len < sizeof *nlmsghdr
         || nlmsghdr->nlmsg_len > retval) {
-        VLOG_ERR_RL(&rl, "received invalid nlmsg (%zd bytes < %zu)",
+        VLOG_ERR_RL(&rl, "received invalid nlmsg (%"PRIdSIZE" bytes < %"PRIuSIZE")",
                     retval, sizeof *nlmsghdr);
         return EPROTO;
     }

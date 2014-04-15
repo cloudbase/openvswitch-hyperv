@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009, 2010, 2011, 2012, 2013, 2014 Nicira, Inc.
+ * Copyright (c) 2009, 2010, 2011, 2012, 2013 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,7 +22,6 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include "command-line.h"
-#include "fatal-signal.h"
 #include "ofp-msgs.h"
 #include "ofp-util.h"
 #include "ofpbuf.h"
@@ -34,7 +33,6 @@
 #include "timeval.h"
 #include "util.h"
 #include "vlog.h"
-#include "ovstest.h"
 
 #undef NDEBUG
 #include <assert.h>
@@ -61,9 +59,9 @@ static void
 check_errno(int a, int b, const char *as, const char *file, int line)
 {
     if (a != b) {
-        char *str_b = strdup(ovs_strerror(abs(b)));
+        char *str_b = strdup(strerror(abs(b)));
         ovs_fatal(0, "%s:%d: %s is %d (%s) but should be %d (%s)",
-                  file, line, as, a, ovs_strerror(abs(a)), b, str_b);
+                  file, line, as, a, strerror(abs(a)), b, str_b);
     }
 }
 
@@ -158,14 +156,14 @@ test_refuse_connection(int argc OVS_UNUSED, char *argv[])
     if (!strcmp(type, "tcp")) {
         if (error != ECONNRESET && error != EPIPE) {
             ovs_fatal(0, "unexpected vconn_connect() return value %d (%s)",
-                      error, ovs_strerror(error));
+                      error, strerror(error));
         }
     } else if (!strcmp(type, "unix")) {
         CHECK_ERRNO(error, EPIPE);
     } else if (!strcmp(type, "ssl")) {
         if (error != EPROTO && error != ECONNRESET) {
             ovs_fatal(0, "unexpected vconn_connect() return value %d (%s)",
-                      error, ovs_strerror(error));
+                      error, strerror(error));
         }
     } else {
         ovs_fatal(0, "invalid connection type %s", type);
@@ -196,7 +194,7 @@ test_accept_then_close(int argc OVS_UNUSED, char *argv[])
     if (!strcmp(type, "tcp") || !strcmp(type, "unix")) {
         if (error != ECONNRESET && error != EPIPE) {
             ovs_fatal(0, "unexpected vconn_connect() return value %d (%s)",
-                      error, ovs_strerror(error));
+                      error, strerror(error));
         }
     } else {
         CHECK_ERRNO(error, EPROTO);
@@ -251,7 +249,7 @@ test_read_hello(int argc OVS_UNUSED, char *argv[])
     error = vconn_connect_block(vconn);
     if (error != ECONNRESET && error != EPIPE) {
         ovs_fatal(0, "unexpected vconn_connect() return value %d (%s)",
-                  error, ovs_strerror(error));
+                  error, strerror(error));
     }
     vconn_close(vconn);
 }
@@ -357,7 +355,7 @@ test_send_plain_hello(int argc OVS_UNUSED, char *argv[])
 
     hello = ofpraw_alloc_xid(OFPRAW_OFPT_HELLO, OFP10_VERSION,
                              htonl(0x12345678), 0);
-    test_send_hello(type, ofpbuf_data(hello), ofpbuf_size(hello), 0);
+    test_send_hello(type, hello->data, hello->size, 0);
     ofpbuf_delete(hello);
 }
 
@@ -375,7 +373,7 @@ test_send_long_hello(int argc OVS_UNUSED, char *argv[])
                              htonl(0x12345678), EXTRA_BYTES);
     ofpbuf_put_zeros(hello, EXTRA_BYTES);
     ofpmsg_update_length(hello);
-    test_send_hello(type, ofpbuf_data(hello), ofpbuf_size(hello), 0);
+    test_send_hello(type, hello->data, hello->size, 0);
     ofpbuf_delete(hello);
 }
 
@@ -389,7 +387,7 @@ test_send_echo_hello(int argc OVS_UNUSED, char *argv[])
 
     echo = ofpraw_alloc_xid(OFPRAW_OFPT_ECHO_REQUEST, OFP10_VERSION,
                              htonl(0x12345678), 0);
-    test_send_hello(type, ofpbuf_data(echo), ofpbuf_size(echo), EPROTO);
+    test_send_hello(type, echo->data, echo->size, EPROTO);
     ofpbuf_delete(echo);
 }
 
@@ -415,8 +413,8 @@ test_send_invalid_version_hello(int argc OVS_UNUSED, char *argv[])
 
     hello = ofpraw_alloc_xid(OFPRAW_OFPT_HELLO, OFP10_VERSION,
                              htonl(0x12345678), 0);
-    ((struct ofp_header *) ofpbuf_data(hello))->version = 0;
-    test_send_hello(type, ofpbuf_data(hello), ofpbuf_size(hello), EPROTO);
+    ((struct ofp_header *) hello->data)->version = 0;
+    test_send_hello(type, hello->data, hello->size, EPROTO);
     ofpbuf_delete(hello);
 }
 
@@ -432,17 +430,17 @@ static const struct command commands[] = {
     {NULL, 0, 0, NULL},
 };
 
-static void
-test_vconn_main(int argc, char *argv[])
+int
+main(int argc, char *argv[])
 {
     set_program_name(argv[0]);
     vlog_set_levels(NULL, VLF_ANY_FACILITY, VLL_EMER);
     vlog_set_levels(NULL, VLF_CONSOLE, VLL_DBG);
-    fatal_ignore_sigpipe();
+    signal(SIGPIPE, SIG_IGN);
 
     time_alarm(10);
 
     run_command(argc - 1, argv + 1, commands);
-}
 
-OVSTEST_REGISTER("test-vconn", test_vconn_main);
+    return 0;
+}

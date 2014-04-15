@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010, 2012, 2013, 2014 Nicira, Inc.
+ * Copyright (c) 2010, 2012 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,29 +26,25 @@
 
 #include "flow.h"
 #include "ofp-actions.h"
+#include "random.h"
 #include "util.h"
-#include "ovstest.h"
 
-static void
-test_multipath_main(int argc, char *argv[])
+int
+main(int argc, char *argv[])
 {
     enum { MP_MAX_LINKS = 63 };
     struct ofpact_multipath mp;
     bool ok = true;
-    char *error;
     int n;
 
     set_program_name(argv[0]);
+    random_init();
 
     if (argc != 2) {
         ovs_fatal(0, "usage: %s multipath_action", program_name);
     }
 
-    error = multipath_parse(&mp, argv[1]);
-    if (error) {
-        ovs_fatal(0, "%s", error);
-    }
-
+    multipath_parse(&mp, argv[1]);
     for (n = 1; n <= MP_MAX_LINKS; n++) {
         enum { N_FLOWS = 65536 };
         double disruption, perfect, distribution;
@@ -64,7 +60,9 @@ test_multipath_main(int argc, char *argv[])
             struct flow_wildcards wc;
             struct flow flow;
 
-            flow_random_hash_fields(&flow);
+            random_bytes(&flow, sizeof flow);
+            memset(flow.zeros, 0, sizeof flow.zeros);
+            flow.mpls_depth = 0;
 
             mp.max_link = n - 1;
             multipath_execute(&mp, &flow, &wc);
@@ -129,11 +127,9 @@ test_multipath_main(int argc, char *argv[])
             break;
 
         default:
-            OVS_NOT_REACHED();
+            NOT_REACHED();
         }
     }
 
-    exit(ok ? 0 : 1);
+    return ok ? 0 : 1;
 }
-
-OVSTEST_REGISTER("test-multipath", test_multipath_main);

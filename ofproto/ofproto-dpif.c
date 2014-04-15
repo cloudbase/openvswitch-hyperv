@@ -4248,7 +4248,7 @@ classify_upcall(const struct dpif_upcall *upcall)
     userdata_len = nl_attr_get_size(upcall->userdata);
     if (userdata_len < sizeof cookie.type
         || userdata_len > sizeof cookie) {
-        VLOG_WARN_RL(&rl, "action upcall cookie has unexpected size %zu",
+        VLOG_WARN_RL(&rl, "action upcall cookie has unexpected size %%"PRIuSIZE,
                      userdata_len);
         return BAD_UPCALL;
     }
@@ -4268,7 +4268,7 @@ classify_upcall(const struct dpif_upcall *upcall)
         return IPFIX_UPCALL;
     } else {
         VLOG_WARN_RL(&rl, "invalid user cookie of type %"PRIu16
-                     " and size %zu", cookie.type, userdata_len);
+                     " and size %"PRIuSIZE, cookie.type, userdata_len);
         return BAD_UPCALL;
     }
 }
@@ -8298,7 +8298,7 @@ trace_format_regs(struct ds *result, int level, const char *title,
     ds_put_char_multiple(result, '\t', level);
     ds_put_format(result, "%s:", title);
     for (i = 0; i < FLOW_N_REGS; i++) {
-        ds_put_format(result, " reg%zu=0x%"PRIx32, i, trace->flow.regs[i]);
+        ds_put_format(result, " reg%"PRIuSIZE"=0x%"PRIx32, i, trace->flow.regs[i]);
     }
     ds_put_char(result, '\n');
 }
@@ -8677,7 +8677,7 @@ show_dp_format(const struct ofproto_dpif *ofproto, struct ds *ds)
     ds_put_format(ds,
                   "\tlookups: hit:%"PRIu64" missed:%"PRIu64"\n",
                   ofproto->n_hit, ofproto->n_missed);
-    ds_put_format(ds, "\tflows: cur: %zu, avg: %5.3f, max: %d,"
+    ds_put_format(ds, "\tflows: cur: %"PRIuSIZE", avg: %5.3f, max: %d,"
                   " life span: %llu(ms)\n",
                   hmap_count(&ofproto->subfacets),
                   avg_subfacet_count(ofproto),
@@ -8812,7 +8812,7 @@ ofproto_unixctl_dpif_dump_megaflows(struct unixctl_conn *conn,
     CLS_CURSOR_FOR_EACH (facet, cr, &cursor) {
         cls_rule_format(&facet->cr, &ds);
         ds_put_cstr(&ds, ", ");
-        ds_put_format(&ds, "n_subfacets:%zu, ", list_size(&facet->subfacets));
+        ds_put_format(&ds, "n_subfacets:%"PRIuSIZE", ", list_size(&facet->subfacets));
         ds_put_format(&ds, "used:%.3fs, ", (now - facet->used) / 1000.0);
         ds_put_cstr(&ds, "Datapath actions: ");
         if (facet->xout.slow) {

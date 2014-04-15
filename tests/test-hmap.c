@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008, 2009, 2010, 2013, 2014 Nicira, Inc.
+ * Copyright (c) 2008, 2009, 2010 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,9 +21,7 @@
 #include "hmap.h"
 #include <string.h>
 #include "hash.h"
-#include "random.h"
 #include "util.h"
-#include "ovstest.h"
 
 #undef NDEBUG
 #include <assert.h>
@@ -110,7 +108,7 @@ static void
 shuffle(int *p, size_t n)
 {
     for (; n > 1; n--, p++) {
-        int *q = &p[random_range(n)];
+        int *q = &p[rand() % n];
         int tmp = *p;
         *p = *q;
         *q = tmp;
@@ -126,7 +124,7 @@ print_hmap(const char *name, struct hmap *hmap)
 
     printf("%s:", name);
     HMAP_FOR_EACH (e, node, hmap) {
-        printf(" %d(%"PRIuSIZE")", e->value, e->node.hash & hmap->mask);
+        printf(" %d(%zu)", e->value, e->node.hash & hmap->mask);
     }
     printf("\n");
 }
@@ -286,13 +284,13 @@ run_test(void (*function)(hash_func *))
     }
 }
 
-static void
-test_hmap_main(int argc OVS_UNUSED, char *argv[] OVS_UNUSED)
+int
+main(void)
 {
     run_test(test_hmap_insert_delete);
     run_test(test_hmap_for_each_safe);
     run_test(test_hmap_reserve_shrink);
     printf("\n");
+    return 0;
 }
 
-OVSTEST_REGISTER("test-hmap", test_hmap_main);

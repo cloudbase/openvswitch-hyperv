@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2012, 2013, 2014 Nicira, Inc.
+ * Copyright (c) 2011, 2012, 2013 Nicira, Inc.
  * Copyright (c) 2013 InMon Corp.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -35,7 +35,6 @@
 #include "unixctl.h"
 #include "util.h"
 #include "vlog.h"
-#include "ovstest.h"
 
 static void usage(void) NO_RETURN;
 static void parse_options(int argc, char *argv[]);
@@ -45,6 +44,7 @@ static unixctl_cb_func test_sflow_exit;
 /* Datagram. */
 #define SFLOW_VERSION_5 5
 #define SFLOW_MIN_LEN 36
+#define SFLOW_MAX_AGENTIP_STRLEN 64
 
 /* Sample tag numbers. */
 #define SFLOW_FLOW_SAMPLE 1
@@ -82,7 +82,7 @@ struct sflow_xdr {
 
     /* Agent. */
     struct sflow_addr agentAddr;
-    char agentIPStr[INET6_ADDRSTRLEN + 2];
+    char agentIPStr[SFLOW_MAX_AGENTIP_STRLEN];
     uint32_t subAgentId;
     uint32_t uptime_mS;
 
@@ -325,12 +325,14 @@ process_datagram(struct sflow_xdr *x)
 
     /* Store the agent address as a string. */
     if (x->agentAddr.type == SFLOW_ADDRTYPE_IP6) {
-        char ipstr[INET6_ADDRSTRLEN];
-        inet_ntop(AF_INET6, (const void *) &x->agentAddr.a.ip6,
-                  ipstr, INET6_ADDRSTRLEN);
-        snprintf(x->agentIPStr, sizeof x->agentIPStr, "[%s]", ipstr);
+        snprintf(x->agentIPStr, SFLOW_MAX_AGENTIP_STRLEN,
+                 "%04x:%04x:%04x:%04x",
+                 x->agentAddr.a.ip6[0],
+                 x->agentAddr.a.ip6[1],
+                 x->agentAddr.a.ip6[2],
+                 x->agentAddr.a.ip6[3]);
     } else {
-        snprintf(x->agentIPStr, sizeof x->agentIPStr,
+        snprintf(x->agentIPStr, SFLOW_MAX_AGENTIP_STRLEN,
                  IP_FMT, IP_ARGS(x->agentAddr.a.ip4));
     }
 
@@ -469,13 +471,13 @@ static void
 print_sflow(struct ofpbuf *buf)
 {
     char *dgram_buf;
-    int dgram_len = ofpbuf_size(buf);
+    int dgram_len = buf->size;
     struct sflow_xdr xdrDatagram;
     struct sflow_xdr *x = &xdrDatagram;
 
     memset(x, 0, sizeof *x);
     if (SFLOWXDR_try(x)) {
-        SFLOWXDR_assert(x, (dgram_buf = ofpbuf_try_pull(buf, ofpbuf_size(buf))));
+        SFLOWXDR_assert(x, (dgram_buf = ofpbuf_try_pull(buf, buf->size)));
         sflowxdr_init(x, dgram_buf, dgram_len);
         SFLOWXDR_assert(x, dgram_len >= SFLOW_MIN_LEN);
         process_datagram(x);
@@ -485,8 +487,8 @@ print_sflow(struct ofpbuf *buf)
     }
 }
 
-static void
-test_sflow_main(int argc, char *argv[])
+int
+main(int argc, char *argv[])
 {
     struct unixctl_server *server;
     enum { MAX_RECV = 1500 };
@@ -508,7 +510,7 @@ test_sflow_main(int argc, char *argv[])
 
     sock = inet_open_passive(SOCK_DGRAM, target, 0, NULL, 0);
     if (sock < 0) {
-        ovs_fatal(0, "%s: failed to open (%s)", argv[1], ovs_strerror(-sock));
+        ovs_fatal(0, "%s: failed to open (%s)", argv[1], strerror(-sock));
     }
 
     daemon_save_fd(STDOUT_FILENO);
@@ -530,7 +532,7 @@ test_sflow_main(int argc, char *argv[])
 
         ofpbuf_clear(&buf);
         do {
-            retval = read(sock, ofpbuf_data(&buf), buf.allocated);
+            retval = read(sock, buf.data, buf.allocated);
         } while (retval < 0 && errno == EINTR);
         if (retval > 0) {
             ofpbuf_put_uninit(&buf, retval);
@@ -546,6 +548,8 @@ test_sflow_main(int argc, char *argv[])
         unixctl_server_wait(server);
         poll_block();
     }
+
+    return 0;
 }
 
 static void
@@ -555,7 +559,7 @@ parse_options(int argc, char *argv[])
         DAEMON_OPTION_ENUMS,
         VLOG_OPTION_ENUMS
     };
-    static const struct option long_options[] = {
+    static struct option long_options[] = {
         {"verbose", optional_argument, NULL, 'v'},
         {"help", no_argument, NULL, 'h'},
         DAEMON_LONG_OPTIONS,
@@ -611,5 +615,3 @@ test_sflow_exit(struct unixctl_conn *conn,
     *exiting = true;
     unixctl_command_reply(conn, NULL);
 }
-
-OVSTEST_REGISTER("test-sflow", test_sflow_main);

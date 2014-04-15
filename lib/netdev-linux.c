@@ -964,8 +964,8 @@ netdev_linux_send(struct netdev *netdev_, const void *data, size_t size)
             }
             return errno;
         } else if (retval != size) {
-            VLOG_WARN_RL(&rl, "sent partial Ethernet packet (%zd bytes of "
-                         "%zu) on %s", retval, size, netdev_get_name(netdev_));
+            VLOG_WARN_RL(&rl, "sent partial Ethernet packet (%"PRIdSIZE" bytes of "
+                         "%"PRIuSIZE") on %s", retval, size, netdev_get_name(netdev_));
             return EMSGSIZE;
         } else {
             return 0;

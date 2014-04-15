@@ -188,7 +188,7 @@ hook_malloc(size_t size, const void *caller OVS_UNUSED)
     p = malloc(size);
     get_hooks(&libc_hooks);
 
-    log_callers("malloc(%zu) -> %p", size, p);
+    log_callers("malloc(%"PRIuSIZE") -> %p", size, p);
 
     reset_hooks();
     return p;
@@ -233,7 +233,7 @@ hook_realloc(void *p, size_t size, const void *caller OVS_UNUSED)
     get_hooks(&libc_hooks);
 
     if (p != q) {
-        log_callers("realloc(%p, %zu) -> %p", p, size, q);
+        log_callers("realloc(%p, %"PRIuSIZE") -> %p", p, size, q);
     }
 
     reset_hooks();

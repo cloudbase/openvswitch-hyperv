@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009, 2010, 2011, 2012, 2013, 2014 Nicira, Inc.
+ * Copyright (c) 2009, 2010, 2011, 2012 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,19 +33,20 @@
 #include "timeval.h"
 #include "util.h"
 #include "vlog.h"
-#include "ovstest.h"
+
+static struct command all_commands[];
 
 static void usage(void) NO_RETURN;
 static void parse_options(int argc, char *argv[]);
-static struct command *get_all_commands(void);
 
-static void
-test_jsonrpc_main(int argc, char *argv[])
+int
+main(int argc, char *argv[])
 {
     proctitle_init(argc, argv);
     set_program_name(argv[0]);
     parse_options(argc, argv);
-    run_command(argc - optind, argv + optind, get_all_commands());
+    run_command(argc - optind, argv + optind, all_commands);
+    return 0;
 }
 
 static void
@@ -55,7 +56,7 @@ parse_options(int argc, char *argv[])
         OPT_BOOTSTRAP_CA_CERT = UCHAR_MAX + 1,
         DAEMON_OPTION_ENUMS
     };
-    static const struct option long_options[] = {
+    static struct option long_options[] = {
         {"verbose", optional_argument, NULL, 'v'},
         {"help", no_argument, NULL, 'h'},
         DAEMON_LONG_OPTIONS,
@@ -335,11 +336,3 @@ static struct command all_commands[] = {
     { "help", 0, INT_MAX, do_help },
     { NULL, 0, 0, NULL },
 };
-
-static struct command *
-get_all_commands(void)
-{
-    return all_commands;
-}
-
-OVSTEST_REGISTER("test-jsonrpc", test_jsonrpc_main);

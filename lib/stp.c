@@ -596,7 +596,7 @@ stp_received_bpdu(struct stp_port *p, const void *bpdu, size_t bpdu_size)
     }
 
     if (bpdu_size < sizeof(struct stp_bpdu_header)) {
-        VLOG_WARN("%s: received runt %zu-byte BPDU", stp->name, bpdu_size);
+        VLOG_WARN("%s: received runt %"PRIuSIZE"-byte BPDU", stp->name, bpdu_size);
         p->error_count++;
         return;
     }
@@ -616,7 +616,7 @@ stp_received_bpdu(struct stp_port *p, const void *bpdu, size_t bpdu_size)
     switch (header->bpdu_type) {
     case STP_TYPE_CONFIG:
         if (bpdu_size < sizeof(struct stp_config_bpdu)) {
-            VLOG_WARN("%s: received config BPDU with invalid size %zu",
+            VLOG_WARN("%s: received config BPDU with invalid size %"PRIuSIZE,
                       stp->name, bpdu_size);
             p->error_count++;
             return;
@@ -626,7 +626,7 @@ stp_received_bpdu(struct stp_port *p, const void *bpdu, size_t bpdu_size)
 
     case STP_TYPE_TCN:
         if (bpdu_size != sizeof(struct stp_tcn_bpdu)) {
-            VLOG_WARN("%s: received TCN BPDU with invalid size %zu",
+            VLOG_WARN("%s: received TCN BPDU with invalid size %"PRIuSIZE,
                       stp->name, bpdu_size);
             p->error_count++;
             return;

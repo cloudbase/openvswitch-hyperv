@@ -142,7 +142,7 @@ ovsdb_parser_finish(struct ovsdb_parser *parser)
                     if (n_unused > 1) {
                         ovsdb_parser_raise_error(
                             parser,
-                            "Member '%s' and %zu other member%s "
+                            "Member '%s' and %"PRIuSIZE" other member%s "
                             "are present but not allowed here.",
                             node->name, n_unused - 1, n_unused > 2 ? "s" : "");
                     } else {

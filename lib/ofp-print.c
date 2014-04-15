@@ -124,7 +124,7 @@ ofp_print_packet_in(struct ds *string, const struct ofp_header *oh,
     ds_put_format(string, " (via %s)",
                   ofputil_packet_in_reason_to_string(pin.reason));
 
-    ds_put_format(string, " data_len=%zu", pin.packet_len);
+    ds_put_format(string, " data_len=%"PRIuSIZE"", pin.packet_len);
     if (pin.buffer_id == UINT32_MAX) {
         ds_put_format(string, " (unbuffered)");
         if (pin.total_len != pin.packet_len) {
@@ -168,7 +168,7 @@ ofp_print_packet_out(struct ds *string, const struct ofp_header *oh,
     ofpacts_format(po.ofpacts, po.ofpacts_len, string);
 
     if (po.buffer_id == UINT32_MAX) {
-        ds_put_format(string, " data_len=%zu", po.packet_len);
+        ds_put_format(string, " data_len=%"PRIuSIZE"", po.packet_len);
         if (verbosity > 0 && po.packet_len > 0) {
             char *packet = ofp_packet_to_string(po.packet, po.packet_len);
             ds_put_char(string, '\n');
@@ -1170,7 +1170,7 @@ ofp_print_ofpst_port_reply(struct ds *string, const struct ofp_header *oh,
 {
     struct ofpbuf b;
 
-    ds_put_format(string, " %zu ports\n", ofputil_count_port_stats(oh));
+    ds_put_format(string, " %"PRIuSIZE" ports\n", ofputil_count_port_stats(oh));
     if (verbosity < 1) {
         return;
     }
@@ -1278,7 +1278,7 @@ ofp_print_ofpst_table_reply13(struct ds *string, const struct ofp_header *oh,
     ofpraw_pull_assert(&b);
 
     n = b.size / sizeof *ts;
-    ds_put_format(string, " %zu tables\n", n);
+    ds_put_format(string, " %"PRIuSIZE" tables\n", n);
     if (verbosity < 1) {
         return;
     }
@@ -1308,7 +1308,7 @@ ofp_print_ofpst_table_reply12(struct ds *string, const struct ofp_header *oh,
     ofpraw_pull_assert(&b);
 
     n = b.size / sizeof *ts;
-    ds_put_format(string, " %zu tables\n", n);
+    ds_put_format(string, " %"PRIuSIZE" tables\n", n);
     if (verbosity < 1) {
         return;
     }
@@ -1335,7 +1335,7 @@ ofp_print_ofpst_table_reply11(struct ds *string, const struct ofp_header *oh,
     ofpraw_pull_assert(&b);
 
     n = b.size / sizeof *ts;
-    ds_put_format(string, " %zu tables\n", n);
+    ds_put_format(string, " %"PRIuSIZE" tables\n", n);
     if (verbosity < 1) {
         return;
     }
@@ -1375,7 +1375,7 @@ ofp_print_ofpst_table_reply10(struct ds *string, const struct ofp_header *oh,
     ofpraw_pull_assert(&b);
 
     n = b.size / sizeof *ts;
-    ds_put_format(string, " %zu tables\n", n);
+    ds_put_format(string, " %"PRIuSIZE" tables\n", n);
     if (verbosity < 1) {
         return;
     }
@@ -1459,7 +1459,7 @@ ofp_print_ofpst_queue_reply(struct ds *string, const struct ofp_header *oh,
 {
     struct ofpbuf b;
 
-    ds_put_format(string, " %zu queues\n", ofputil_count_queue_stats(oh));
+    ds_put_format(string, " %"PRIuSIZE" queues\n", ofputil_count_queue_stats(oh));
     if (verbosity < 1) {
         return;
     }
@@ -1534,7 +1534,7 @@ ofp_print_echo(struct ds *string, const struct ofp_header *oh, int verbosity)
 {
     size_t len = ntohs(oh->length);
 
-    ds_put_format(string, " %zu bytes of payload\n", len - sizeof *oh);
+    ds_put_format(string, " %"PRIuSIZE" bytes of payload\n", len - sizeof *oh);
     if (verbosity > 1) {
         ds_put_hex_dump(string, oh + 1, len - sizeof *oh, 0, true);
     }
@@ -2062,7 +2062,7 @@ ofp_to_string(const void *oh_, size_t len, int verbosity)
     if (!len) {
         ds_put_cstr(&string, "OpenFlow message is empty\n");
     } else if (len < sizeof(struct ofp_header)) {
-        ds_put_format(&string, "OpenFlow packet too short (only %zu bytes):\n",
+        ds_put_format(&string, "OpenFlow packet too short (only %"PRIuSIZE" bytes):\n",
                       len);
     } else if (ntohs(oh->length) > len) {
         enum ofperr error;
@@ -2075,11 +2075,11 @@ ofp_to_string(const void *oh_, size_t len, int verbosity)
         }
 
         ds_put_format(&string,
-                      "(***truncated to %zu bytes from %"PRIu16"***)\n",
+                      "(***truncated to %"PRIuSIZE" bytes from %"PRIu16"***)\n",
                       len, ntohs(oh->length));
     } else if (ntohs(oh->length) < len) {
         ds_put_format(&string,
-                      "(***only uses %"PRIu16" bytes out of %zu***)\n",
+                      "(***only uses %"PRIu16" bytes out of %"PRIuSIZE"***)\n",
                       ntohs(oh->length), len);
     } else {
         enum ofperr error;

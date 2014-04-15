@@ -199,8 +199,8 @@ dec_ttl_cnt_ids_from_openflow(const struct nx_action_cnt_ids *nac_ids,
     }
 
     if (ids_size < ids->n_controllers * sizeof(ovs_be16)) {
-        VLOG_WARN_RL(&rl, "Nicira action dec_ttl_cnt_ids only has %zu bytes "
-                     "allocated for controller ids.  %zu bytes are required for "
+        VLOG_WARN_RL(&rl, "Nicira action dec_ttl_cnt_ids only has %"PRIuSIZE" bytes "
+                     "allocated for controller ids.  %"PRIuSIZE" bytes are required for "
                      "%"PRIu16" controllers.", ids_size,
                      ids->n_controllers * sizeof(ovs_be16), ids->n_controllers);
         return OFPERR_OFPBAC_BAD_LEN;
@@ -641,7 +641,7 @@ ofpacts_pull_actions(struct ofpbuf *openflow, unsigned int actions_len,
     actions = ofpbuf_try_pull(openflow, actions_len);
     if (actions == NULL) {
         VLOG_WARN_RL(&rl, "OpenFlow message actions length %u exceeds "
-                     "remaining message length (%zu)",
+                     "remaining message length (%"PRIuSIZE")",
                      actions_len, openflow->size);
         return OFPERR_OFPBRC_BAD_LEN;
     }
@@ -1010,7 +1010,7 @@ decode_openflow11_instructions(const struct ofp11_instruction insts[],
     }
 
     if (left) {
-        VLOG_WARN_RL(&rl, "bad instruction format at offset %zu",
+        VLOG_WARN_RL(&rl, "bad instruction format at offset %"PRIuSIZE"",
                      (n_insts - left) * sizeof *inst);
         return OFPERR_OFPBIC_BAD_LEN;
     }
@@ -1072,7 +1072,7 @@ ofpacts_pull_openflow11_instructions(struct ofpbuf *openflow,
     instructions = ofpbuf_try_pull(openflow, instructions_len);
     if (instructions == NULL) {
         VLOG_WARN_RL(&rl, "OpenFlow message instructions length %u exceeds "
-                     "remaining message length (%zu)",
+                     "remaining message length (%"PRIuSIZE")",
                      instructions_len, openflow->size);
         error = OFPERR_OFPBIC_BAD_LEN;
         goto exit;

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009, 2010, 2014 Nicira, Inc.
+ * Copyright (c) 2009, 2010 Nicira, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,10 +17,9 @@
 #include <config.h>
 #include "util.h"
 #include <stdlib.h>
-#include "ovstest.h"
 
-static void
-test_filename_main(int argc, char *argv[])
+int
+main(int argc, char *argv[])
 {
     int i;
 
@@ -35,6 +34,6 @@ test_filename_main(int argc, char *argv[])
         puts(base);
         free(base);
     }
-}
 
-OVSTEST_REGISTER("test-file_name", test_filename_main);
+    return 0;
+}

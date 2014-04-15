@@ -676,7 +676,7 @@ format_backtraces(struct ds *ds, size_t min_count)
 
             frame_strs = backtrace_symbols(trace->backtrace, trace->n_frames);
 
-            ds_put_format(ds, "Count %zu\n", trace->count);
+            ds_put_format(ds, "Count %"PRIuSIZE"\n", trace->count);
             for (j = 0; j < trace->n_frames; j++) {
                 ds_put_format(ds, "%s\n", frame_strs[j]);
             }

@@ -51,23 +51,24 @@
 #include "util.h"
 #include "vlog.h"
 
+static struct command all_commands[];
+
 static void usage(void) NO_RETURN;
 static void parse_options(int argc, char *argv[]);
-static struct command *get_all_commands(void);
 
 int
 main(int argc, char *argv[])
 {
     set_program_name(argv[0]);
     parse_options(argc, argv);
-    run_command(argc - optind, argv + optind, get_all_commands());
+    run_command(argc - optind, argv + optind, all_commands);
     return 0;
 }
 
 static void
 parse_options(int argc, char *argv[])
 {
-    static const struct option long_options[] = {
+    static struct option long_options[] = {
         {"timeout", required_argument, NULL, 't'},
         {"verbose", optional_argument, NULL, 'v'},
         {"help", no_argument, NULL, 'h'},
@@ -217,13 +218,16 @@ unbox_json(struct json *json)
     }
 }
 
-static void
+static size_t
 print_and_free_json(struct json *json)
 {
     char *string = json_to_string(json, JSSF_SORT);
+    size_t length = strlen(string);
     json_destroy(json);
     puts(string);
     free(string);
+
+    return length;
 }
 
 static void
@@ -441,7 +445,10 @@ do_parse_atoms(int argc, char *argv[])
         if (error) {
             print_and_free_ovsdb_error(error);
         } else {
-            print_and_free_json(ovsdb_atom_to_json(&atom, base.type));
+            size_t length;
+
+            length = print_and_free_json(ovsdb_atom_to_json(&atom, base.type));
+            ovs_assert(length == ovsdb_atom_json_length(&atom, base.type));
             ovsdb_atom_destroy(&atom, base.type);
         }
     }
@@ -493,12 +500,14 @@ do_parse_data__(int argc, char *argv[],
 
     for (i = 2; i < argc; i++) {
         struct ovsdb_datum datum;
+        size_t length;
 
         json = unbox_json(parse_json(argv[i]));
         check_ovsdb_error(parse(&datum, &type, json, NULL));
         json_destroy(json);
 
-        print_and_free_json(ovsdb_datum_to_json(&datum, &type));
+        length = print_and_free_json(ovsdb_datum_to_json(&datum, &type));
+        ovs_assert(length == ovsdb_datum_json_length(&datum, &type));
 
         ovsdb_datum_destroy(&datum, &type);
     }
@@ -822,7 +831,7 @@ do_evaluate_conditions(int argc OVS_UNUSED, char *argv[])
     json_destroy(json);
 
     for (i = 0; i < n_conditions; i++) {
-        printf("condition %2"PRIuSIZE":", i);
+        printf("condition %2zu:", i);
         for (j = 0; j < n_rows; j++) {
             bool result = ovsdb_condition_evaluate(rows[j], &conditions[i]);
             if (j % 5 == 0) {
@@ -928,7 +937,7 @@ do_execute_mutations(int argc OVS_UNUSED, char *argv[])
     json_destroy(json);
 
     for (i = 0; i < n_sets; i++) {
-        printf("mutation %2"PRIuSIZE":\n", i);
+        printf("mutation %2zu:\n", i);
         for (j = 0; j < n_rows; j++) {
             struct ovsdb_error *error;
             struct ovsdb_row *row;
@@ -936,7 +945,7 @@ do_execute_mutations(int argc OVS_UNUSED, char *argv[])
             row = ovsdb_row_clone(rows[j]);
             error = ovsdb_mutation_set_execute(row, &sets[i]);
 
-            printf("row %"PRIuSIZE": ", j);
+            printf("row %zu: ", j);
             if (error) {
                 print_and_free_ovsdb_error(error);
             } else {
@@ -1060,7 +1069,7 @@ do_query(int argc OVS_UNUSED, char *argv[])
         memset(cbdata.counts, 0, cbdata.n_rows * sizeof *cbdata.counts);
         ovsdb_query(table, &cnd, do_query_cb, &cbdata);
 
-        printf("query %2"PRIuSIZE":", i);
+        printf("query %2zu:", i);
         for (j = 0; j < cbdata.n_rows; j++) {
             if (j % 5 == 0) {
                 putchar(' ');
@@ -1197,7 +1206,7 @@ do_query_distinct(int argc OVS_UNUSED, char *argv[])
         }
         ovsdb_row_set_destroy(&results);
 
-        printf("query %2"PRIuSIZE":", i);
+        printf("query %2zu:", i);
         for (j = 0; j < n_rows; j++) {
             int count = rows[j].class->count;
 
@@ -1671,7 +1680,7 @@ parse_uuids(const struct json *json, struct ovsdb_symbol_table *symtab,
     struct uuid uuid;
 
     if (json->type == JSON_STRING && uuid_from_string(&uuid, json->u.string)) {
-        char *name = xasprintf("#%"PRIuSIZE"#", *n);
+        char *name = xasprintf("#%zu#", *n);
         fprintf(stderr, "%s = "UUID_FMT"\n", name, UUID_ARGS(&uuid));
         ovsdb_symbol_table_put(symtab, name, &uuid, false);
         free(name);
@@ -1992,9 +2001,3 @@ static struct command all_commands[] = {
     { "help", 0, INT_MAX, do_help },
     { NULL, 0, 0, NULL },
 };
-
-static struct command *
-get_all_commands(void)
-{
-    return all_commands;
-}
