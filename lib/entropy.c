@@ -27,29 +27,47 @@
 VLOG_DEFINE_THIS_MODULE(entropy);
 
 static const char urandom[] = "/dev/urandom";
+#ifdef _WIN32
+#include <Wincrypt.h>
+#endif
 
 /* Initializes 'buffer' with 'n' bytes of high-quality random numbers.  Returns
  * 0 if successful, otherwise a positive errno value or EOF on error. */
 int
 get_entropy(void *buffer, size_t n)
 {
-    size_t bytes_read;
-    int error;
-    int fd;
+	int error;
 
-    fd = open(urandom, O_RDONLY);
-    if (fd < 0) {
-        VLOG_ERR("%s: open failed (%s)", urandom, strerror(errno));
-        return errno ? errno : EINVAL;
-    }
+#ifndef _WIN32
+	size_t bytes_read;
+	int fd;
 
-    error = read_fully(fd, buffer, n, &bytes_read);
-    close(fd);
+	fd = open(urandom, O_RDONLY);
+	if (fd < 0) {
+		VLOG_ERR("%s: open failed (%s)", urandom, strerror(errno));
+		return errno ? errno : EINVAL;
+	}
 
-    if (error) {
-        VLOG_ERR("%s: read error (%s)", urandom, ovs_retval_to_string(error));
-    }
-    return error;
+	error = read_fully(fd, buffer, n, &bytes_read);
+	close(fd);
+
+	if (error) {
+		VLOG_ERR("%s: read error (%s)", urandom, ovs_retval_to_string(error));
+	}
+#else
+	error = 0;
+	HCRYPTPROV   crypt_prov = 0;
+
+	CryptAcquireContext(&crypt_prov, NULL, NULL,
+		PROV_RSA_FULL, CRYPT_VERIFYCONTEXT);
+	if (!CryptGenRandom(crypt_prov, n, buffer)) {
+		VLOG_ERR("CryptGenRandom: read error (%s)", ovs_retval_to_string(error));
+		error = EINVAL;
+	}
+
+	CryptReleaseContext(crypt_prov, 0);
+
+#endif
 }
 
 /* Initializes 'buffer' with 'n' bytes of high-quality random numbers.  Exits
