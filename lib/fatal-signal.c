@@ -163,8 +163,13 @@ fatal_signal_run(void)
 
         /* Re-raise the signal with the default handling so that the program
          * termination status reflects that we were killed by this signal */
-        signal(sig_nr, SIG_DFL);
-        raise(sig_nr);
+#ifndef _WIN32
+		signal(sig_nr, SIG_DFL);
+		raise(sig_nr);
+#else
+		signal(SIGABRT, SIG_DFL);
+		raise(SIGABRT);
+#endif
     }
 }
 
@@ -172,7 +177,9 @@ void
 fatal_signal_wait(void)
 {
     fatal_signal_init();
-    poll_fd_wait(signal_fds[0], POLLIN);
+#ifndef _WIN32
+	poll_fd_wait(signal_fds[0], POLLIN);
+#endif
 }
 
 static void
@@ -236,11 +243,17 @@ fatal_signal_remove_file_to_unlink(const char *file)
 int
 fatal_signal_unlink_file_now(const char *file)
 {
+#ifdef _WIN32
+	SetFileAttributes(file, FILE_ATTRIBUTE_NORMAL);
+#endif
     int error = unlink(file) ? errno : 0;
     if (error) {
         VLOG_WARN("could not unlink \"%s\" (%s)", file, strerror(error));
     }
 
+#ifdef _WIN32
+	DeleteFile(file);
+#endif
     fatal_signal_remove_file_to_unlink(file);
 
     return error;
