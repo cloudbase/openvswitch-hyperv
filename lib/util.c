@@ -399,7 +399,11 @@ ovs_hex_dump(FILE *stream, const void *buf_, size_t size,
       n = end - start;
 
       /* Print line. */
+#ifdef _WIN32
       fprintf(stream, "%08jx  ", (uintmax_t) ROUND_DOWN(ofs, per_line));
+#else
+	  fprintf(stream, "%08jx  ", (uintmax_t)ROUND_DOWN(ofs, per_line));
+#endif
       for (i = 0; i < start; i++)
         fprintf(stream, "   ");
       for (; i < end; i++)
