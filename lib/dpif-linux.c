@@ -143,7 +143,11 @@ struct dpif_linux {
     int uc_array_size;          /* Size of 'channels' and 'epoll_events'. */
     struct dpif_channel *channels;
     struct epoll_event *epoll_events;
+#ifndef _WIN32
     int epoll_fd;               /* epoll fd that includes channel socks. */
+#else
+	BOOL have_epoll;
+#endif
     int n_events;               /* Num events returned by epoll_wait(). */
     int event_offset;           /* Offset into 'epoll_events'. */
 
@@ -248,7 +252,12 @@ open_dpif(const struct dpif_linux_dp *dp, struct dpif **dpifp)
     dpif = xzalloc(sizeof *dpif);
     dpif->port_notifier = nln_notifier_create(nln, dpif_linux_port_changed,
                                               dpif);
+
+#ifndef _WIN32
     dpif->epoll_fd = -1;
+#else
+	dpif->have_epoll = FALSE;
+#endif
 
     dpif_init(&dpif->dpif, &dpif_linux_class, dp->name,
               dp->dp_ifindex, dp->dp_ifindex);
@@ -263,9 +272,15 @@ destroy_channels(struct dpif_linux *dpif)
 {
     int i;
 
+#ifndef _WIN32
     if (dpif->epoll_fd < 0) {
         return;
     }
+#else
+	if (!dpif->have_epoll) {
+		return;
+	}
+#endif
 
     for (i = 0; i < dpif->uc_array_size; i++ ) {
         struct dpif_linux_vport vport_request;
@@ -295,8 +310,12 @@ destroy_channels(struct dpif_linux *dpif)
     dpif->epoll_events = NULL;
     dpif->n_events = dpif->event_offset = 0;
 
+#ifndef _WIN32
     close(dpif->epoll_fd);
     dpif->epoll_fd = -1;
+#else
+	dpif->have_epoll = FALSE;
+#endif
 }
 
 static int
@@ -304,9 +323,15 @@ add_channel(struct dpif_linux *dpif, uint32_t port_no, struct nl_sock *sock)
 {
     struct epoll_event event;
 
+#ifndef _WIN32
     if (dpif->epoll_fd < 0) {
         return 0;
     }
+#else
+	if (!dpif->have_epoll) {
+		return FALSE;
+	}
+#endif
 
     /* We assume that the datapath densely chooses port numbers, which
      * can therefore be used as an index into an array of channels. */
@@ -335,15 +360,13 @@ add_channel(struct dpif_linux *dpif, uint32_t port_no, struct nl_sock *sock)
     event.events = EPOLLIN;
     event.data.u32 = port_no;
 
+	//TODO - WIN: perhaps GetQueuedCompletionStatus, or something similar, should have been used here
 #ifndef _WIN32
 	if (epoll_ctl(dpif->epoll_fd, EPOLL_CTL_ADD, nl_sock_fd(sock),
 		&event) < 0) {
-#else
-		if (0)//TODO: perhaps GetQueuedCompletionStatus, or something similar, should have been used here
-		{
-#endif
         return errno;
     }
+#endif
 
     nl_sock_destroy(dpif->channels[port_no].sock);
     dpif->channels[port_no].sock = sock;
@@ -357,9 +380,15 @@ del_channel(struct dpif_linux *dpif, uint32_t port_no)
 {
     struct dpif_channel *ch;
 
+#ifndef _WIN32
     if (dpif->epoll_fd < 0 || port_no >= dpif->uc_array_size) {
         return;
     }
+#else
+	if (!dpif->have_epoll || port_no >= dpif->uc_array_size) {
+		return;
+	}
+#endif
 
     ch = &dpif->channels[port_no];
     if (!ch->sock) {
@@ -507,7 +536,12 @@ dpif_linux_port_add(struct dpif *dpif_, struct netdev *netdev,
     struct ofpbuf options;
     int error;
 
-    if (dpif->epoll_fd >= 0) {
+#ifndef _WIN32
+    if (dpif->epoll_fd >= 0)
+#else
+	if (dpif->have_epoll)
+#endif
+	{
         error = nl_sock_create(NETLINK_GENERIC, &sock);
         if (error) {
             return error;
@@ -655,7 +689,12 @@ dpif_linux_port_get_pid(const struct dpif *dpif_, uint32_t port_no)
 {
     struct dpif_linux *dpif = dpif_linux_cast(dpif_);
 
-    if (dpif->epoll_fd < 0) {
+#ifndef _WIN32
+    if (dpif->epoll_fd < 0)
+#else
+	if (!dpif->have_epoll)
+#endif
+	{
         return 0;
     } else {
         /* The UINT32_MAX "reserved" port number uses the "ovs-system"'s
@@ -1170,9 +1209,15 @@ dpif_linux_recv_set(struct dpif *dpif_, bool enable)
 {
     struct dpif_linux *dpif = dpif_linux_cast(dpif_);
 
+#ifndef _WIN32
     if ((dpif->epoll_fd >= 0) == enable) {
         return 0;
     }
+#else
+	if (dpif->have_epoll == enable) {
+		return 0;
+	}
+#endif
 
     if (!enable) {
         destroy_channels(dpif);
@@ -1183,9 +1228,17 @@ dpif_linux_recv_set(struct dpif *dpif_, bool enable)
 #ifndef _WIN32
 		dpif->epoll_fd = epoll_create(10);
 #else
+#if __EPOLL_CAN_WORK_AS_SOCKET_WHILE_NO_ONE_SENDS_NOR_RECEIVES___WHICH_WILL_NEVER_HAPPEN
 		dpif->epoll_fd = socket(AF_UNSPEC, SOCK_STREAM, IPPROTO_TCP);
 #endif
-        if (dpif->epoll_fd < 0) {
+#endif
+
+#ifndef _WIN32
+        if (dpif->epoll_fd < 0)
+#else
+		if (!dpif->have_epoll)
+#endif
+		{
             return errno;
         }
 
@@ -1313,7 +1366,12 @@ dpif_linux_recv(struct dpif *dpif_, struct dpif_upcall *upcall,
     struct dpif_linux *dpif = dpif_linux_cast(dpif_);
     int read_tries = 0;
 
-    if (dpif->epoll_fd < 0) {
+#ifndef _WIN32
+    if (dpif->epoll_fd < 0)
+#else
+	if (!dpif->have_epoll)
+#endif
+	{
        return EAGAIN;
     }
 
@@ -1387,11 +1445,18 @@ dpif_linux_recv_wait(struct dpif *dpif_)
 {
     struct dpif_linux *dpif = dpif_linux_cast(dpif_);
 
-    if (dpif->epoll_fd < 0) {
+#ifndef _WIN32
+    if (dpif->epoll_fd < 0)
+#else
+	if (!dpif->have_epoll)
+#endif
+	{
        return;
     }
 
+#ifndef _WIN32
     poll_fd_wait(dpif->epoll_fd, POLLIN);
+#endif
 }
 
 static void
@@ -1400,7 +1465,12 @@ dpif_linux_recv_purge(struct dpif *dpif_)
     struct dpif_linux *dpif = dpif_linux_cast(dpif_);
     struct dpif_channel *ch;
 
-    if (dpif->epoll_fd < 0) {
+#ifndef _WIN32
+    if (dpif->epoll_fd < 0)
+#else
+	if (!dpif->have_epoll)
+#endif
+	{
        return;
     }
 
