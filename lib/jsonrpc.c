@@ -119,6 +119,12 @@ jsonrpc_run(struct jsonrpc *rpc)
         int retval;
 
         retval = stream_send(rpc->stream, buf->data, buf->size);
+#if _DEBUG
+		if (retval == 0)
+		{
+			VLOG_WARN(__FUNCTION__ ": sent 0 bytes!\n");
+		}
+#endif
         if (retval >= 0) {
             rpc->backlog -= retval;
             ofpbuf_pull(buf, retval);
