@@ -1,6 +1,16 @@
 #include <config.h>
 #include <unistd.h>
 #include <sys/time.h>
+
+#include "netlink.h"
+
+#if __USE_REMOTE_IO_NL_DEVICE
+#undef __USE_REMOTE_IO_NL_DEVICE
+#endif
+
+#if __USE_REMOTE_IO_NL_DEVICE
+#include <assert.h>
+#endif
 int gettimeofday(struct timeval* tp, void* tzp)
 {
     FILETIME fileTime;
@@ -37,6 +47,36 @@ int clock_gettime(clockid_t clock_id, struct timespec *tp)
         QueryPerformanceCounter(&counts);
         if (freq.QuadPart == 0)
             QueryPerformanceFrequency(&freq);
+
+
+#if __USE_REMOTE_IO_NL_DEVICE
+#if defined(_DEBUG) && defined(_WIN32)
+		if (!g_initialCounts)
+		{
+			//remote io: set the g_initialCounts here.
+			DebugBreak();
+
+			//must be set manually in the debugger:
+			assert(g_initialCounts > 0);
+			assert(counts.QuadPart > g_initialCounts);
+
+			//'add' 2 mins to the cur time: we started the userspace ~2 mins after we started the kernel
+			counts.QuadPart -= (freq.QuadPart * 2 * 60);
+
+			g_deltaCounts = counts.QuadPart - g_initialCounts;
+			counts.QuadPart = g_initialCounts;
+
+			assert(g_deltaCounts > 0);
+		}
+
+		else
+		{
+			assert(g_deltaCounts > 0);
+			assert(counts.QuadPart > g_deltaCounts);
+			counts.QuadPart -= g_deltaCounts;
+		}
+#endif
+#endif
 
         tp->tv_sec = counts.QuadPart / freq.QuadPart;
         /* Get the difference between the number of ns stored
