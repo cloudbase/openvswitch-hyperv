@@ -343,7 +343,11 @@ void
 set_program_name__(const char *argv0, const char *version, const char *date,
                    const char *time)
 {
+#ifdef _WIN32
+	const char *slash = strrchr(argv0, '\\');
+#else
     const char *slash = strrchr(argv0, '/');
+#endif
     program_name = slash ? slash + 1 : argv0;
 
     free(program_version);
@@ -665,12 +669,20 @@ abs_file_name(const char *dir, const char *file_name)
     if (file_name[0] == '/') {
         return xstrdup(file_name);
     } else if (dir && dir[0]) {
+#ifndef _WIN32
         char *separator = dir[strlen(dir) - 1] == '/' ? "" : "/";
+#else
+        char *separator = dir[strlen(dir) - 1] == '\\' ? "" : "\\";
+#endif
         return xasprintf("%s%s%s", dir, separator, file_name);
     } else {
         char *cwd = get_cwd();
         if (cwd) {
+#ifndef _WIN32
             char *abs_name = xasprintf("%s/%s", cwd, file_name);
+#else
+            char *abs_name = xasprintf("%s\\%s", cwd, file_name);
+#endif
             free(cwd);
             return abs_name;
         } else {
