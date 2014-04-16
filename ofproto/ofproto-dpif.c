@@ -7368,6 +7368,8 @@ xlate_actions_for_side_effects(struct xlate_in *xin)
 static void
 xlate_report(struct xlate_ctx *ctx, const char *s)
 {
+	VLOG_INFO("xlate: %s", s);
+
     if (ctx->xin->report_hook) {
         ctx->xin->report_hook(ctx, s);
     }

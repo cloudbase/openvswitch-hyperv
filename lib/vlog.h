@@ -185,10 +185,22 @@ void vlog_rate_limit(const struct vlog_module *, enum vlog_level,
 /* Convenience macros for rate-limiting.
  * Guaranteed to preserve errno.
  */
+
+#if __USE_RATE_LIMIIT
+
 #define VLOG_ERR_RL(RL, ...) VLOG_RL(RL, VLL_ERR, __VA_ARGS__)
 #define VLOG_WARN_RL(RL, ...) VLOG_RL(RL, VLL_WARN, __VA_ARGS__)
 #define VLOG_INFO_RL(RL, ...) VLOG_RL(RL, VLL_INFO, __VA_ARGS__)
 #define VLOG_DBG_RL(RL, ...) VLOG_RL(RL, VLL_DBG, __VA_ARGS__)
+
+#else
+
+#define VLOG_ERR_RL(RL, ...) VLOG(VLL_ERR, __VA_ARGS__)
+#define VLOG_WARN_RL(RL, ...) VLOG(VLL_WARN, __VA_ARGS__)
+#define VLOG_INFO_RL(RL, ...) VLOG(VLL_INFO, __VA_ARGS__)
+#define VLOG_DBG_RL(RL, ...) VLOG(VLL_DBG, __VA_ARGS__)
+
+#endif
 
 #define VLOG_DROP_ERR(RL) vlog_should_drop(THIS_MODULE, VLL_ERR, RL)
 #define VLOG_DROP_WARN(RL) vlog_should_drop(THIS_MODULE, VLL_WARN, RL)
