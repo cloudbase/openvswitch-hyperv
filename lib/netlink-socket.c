@@ -1517,7 +1517,9 @@ nl_dump_done(struct nl_dump *dump)
 void
 nl_sock_wait(const struct nl_sock *sock, short int events)
 {
+#ifndef _WIN32
     poll_fd_wait(sock->fd, events);
+#endif
 }
 
 /* Returns the underlying fd for 'sock', for use in "poll()"-like operations

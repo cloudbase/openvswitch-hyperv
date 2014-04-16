@@ -202,7 +202,7 @@ const struct nlattr *nl_attr_find_nested(const struct nlattr *, uint16_t type);
 const struct nlattr *nl_attr_find__(const struct nlattr *attrs, size_t size,
                                     uint16_t type);
 
-#define __USE_REMOTE_IO_NL_DEVICE 1
+#define __USE_REMOTE_IO_NL_DEVICE 0
 
 #if __USE_REMOTE_IO_NL_DEVICE
 
