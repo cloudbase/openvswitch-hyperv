@@ -103,3 +103,4 @@ tests/flows3.txt
 !*Debug*.c
 !*Debug*.h
 *temp.out*
+*.bak
