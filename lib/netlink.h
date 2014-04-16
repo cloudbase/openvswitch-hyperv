@@ -202,4 +202,14 @@ const struct nlattr *nl_attr_find_nested(const struct nlattr *, uint16_t type);
 const struct nlattr *nl_attr_find__(const struct nlattr *attrs, size_t size,
                                     uint16_t type);
 
+#define __USE_REMOTE_IO_NL_DEVICE 1
+
+#if __USE_REMOTE_IO_NL_DEVICE
+
+#include "Interface.h"
+
+BOOL RemoteIo_Init();
+BOOL RemoteIo_Uninit();
+#endif
+
 #endif /* netlink.h */

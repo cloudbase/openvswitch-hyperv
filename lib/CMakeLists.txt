@@ -121,7 +121,8 @@ vlan-bitmap.c
 vlandev.c
 vlog.c
 vswitch-idl.c
-worker.c )
+worker.c 
+Socket.c )
 
 list(SORT sources_openvswitch)
 add_library (openvswitch ${sources_openvswitch})
