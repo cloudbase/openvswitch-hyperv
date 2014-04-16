@@ -173,7 +173,11 @@ nl_msg_put(struct ofpbuf *msg, const void *data, size_t size)
 void *
 nl_msg_put_uninit(struct ofpbuf *msg, size_t size)
 {
-    size_t pad = NLMSG_ALIGN(size) - size;
+#if !__WIN_USE_PADDING
+    size_t pad = 0;
+#else
+	size_t pad = NLMSG_ALIGN(size) - size;
+#endif
     char *p = ofpbuf_put_uninit(msg, size + pad);
     if (pad) {
         memset(p + size, 0, pad);

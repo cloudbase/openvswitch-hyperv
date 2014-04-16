@@ -80,8 +80,15 @@ struct nlmsghdr {
 };
 BUILD_ASSERT_DECL(sizeof(struct nlmsghdr) == 16);
 
+#define __WIN_USE_PADDING 0 
+
+#if __WIN_USE_PADDING 
 #define NLMSG_ALIGNTO 4
 #define NLMSG_ALIGN(SIZE) ROUND_UP(SIZE, NLMSG_ALIGNTO)
+#else
+#define NLMSG_ALIGN(SIZE) SIZE
+#endif
+
 #define NLMSG_HDRLEN ((int) NLMSG_ALIGN(sizeof(struct nlmsghdr)))
 
 struct nlmsgerr
