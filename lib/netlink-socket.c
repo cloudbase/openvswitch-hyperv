@@ -313,11 +313,16 @@ retry_send:
 				memcpy(data, inData, pOut->bytesRead);
 			}
 		}
+	}
 
-		if (pBytesRead)
-		{
-			*pBytesRead = pOut->bytesRead;
-		}
+	else
+	{
+		ovs_assert(!pOut->bytesRead);
+	}
+
+	if (pBytesRead)
+	{
+		*pBytesRead = pOut->bytesRead;
 	}
 
 	if (pOut->haveOverlapped && pOverlapped)
