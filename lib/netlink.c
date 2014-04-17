@@ -607,7 +607,10 @@ nl_attr_get_nested(const struct nlattr *nla, struct ofpbuf *nested)
 
 /* Default minimum and maximum payload sizes for each type of attribute. */
 static const size_t attr_len_range[][2] = {
-    [N_NL_ATTR_TYPES - 1] = { 0, SIZE_MAX },
+#ifdef _WIN32
+	[NL_A_NO_ATTR] = { 0, SIZE_MAX },
+	[NL_A_UNSPEC] = { 0, SIZE_MAX },
+#endif
     [NL_A_U8] = { 1, 1 },
     [NL_A_U16] = { 2, 2 },
     [NL_A_U32] = { 4, 4 },
