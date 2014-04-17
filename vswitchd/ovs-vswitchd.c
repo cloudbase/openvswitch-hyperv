@@ -62,6 +62,10 @@
 #include "worker.h"
 
 #ifdef _WIN32
+#include "netlink.h"
+#endif
+
+#ifdef _WIN32
 #define HAVE_MLOCKALL 0
 #undef HAVE_MLOCKALL
 #endif
