@@ -1229,9 +1229,13 @@ dpif_linux_recv_set(struct dpif *dpif_, bool enable)
 #ifndef _WIN32
 		dpif->epoll_fd = epoll_create(10);
 #else
+
 #if __EPOLL_CAN_WORK_AS_SOCKET_WHILE_NO_ONE_SENDS_NOR_RECEIVES___WHICH_WILL_NEVER_HAPPEN
 		dpif->epoll_fd = socket(AF_UNSPEC, SOCK_STREAM, IPPROTO_TCP);
+#else
+		dpif->have_epoll = TRUE;
 #endif
+
 #endif
 
 #ifndef _WIN32
@@ -1376,18 +1380,16 @@ dpif_linux_recv(struct dpif *dpif_, struct dpif_upcall *upcall,
        return EAGAIN;
     }
 
+#ifndef _WIN32
     if (dpif->event_offset >= dpif->n_events) {
         int retval;
 
         dpif->event_offset = dpif->n_events = 0;
 
         do {
-#ifndef _WIN32
 			retval = epoll_wait(dpif->epoll_fd, dpif->epoll_events,
 				dpif->uc_array_size, 0);
-#else
-			retval = poll(dpif->channels, 1, 2);
-#endif
+			//retval = poll(dpif->channels, 1, 2);
         } while (retval < 0 && errno == EINTR);
         if (retval < 0) {
             static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 1);
@@ -1401,7 +1403,15 @@ dpif_linux_recv(struct dpif *dpif_, struct dpif_upcall *upcall,
         int idx = dpif->epoll_events[dpif->event_offset].data.u32;
         struct dpif_channel *ch = &dpif->channels[idx];
 
-        dpif->event_offset++;
+		dpif->event_offset++;
+#else
+	for (int i = 0; i < dpif->uc_array_size; ++i)
+	{
+		struct dpif_channel *ch = &dpif->channels[i];
+		
+		if (!ch->sock)
+			continue;
+#endif
 
         for (;;) {
             int dp_ifindex;
