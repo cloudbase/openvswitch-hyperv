@@ -66,7 +66,8 @@ nl_msg_nlmsgerr(const struct ofpbuf *msg, int *errorp)
         int code = EPROTO;
         if (!err) {
             VLOG_ERR_RL(&rl, "received invalid nlmsgerr (%"PRIdSIZE" bytes < %zd)",
-                        msg->size, NLMSG_HDRLEN + sizeof *err);
+				msg->size, NLMSG_HDRLEN + sizeof *err);
+				ovs_assert(0);
         } else if (err->error <= 0 && err->error > INT_MIN) {
             code = -err->error;
         }
@@ -642,18 +643,21 @@ nl_attr_validate(const struct nlattr *nla, const struct nl_policy *policy)
     len = nl_attr_get_size(nla);
     if (len < min_len || len > max_len) {
         VLOG_DBG_RL(&rl, "attr %"PRIu16" length %"PRIuSIZE" not in "
-                    "allowed range %"PRIuSIZE"...%"PRIuSIZE"", type, len, min_len, max_len);
+			"allowed range %"PRIuSIZE"...%"PRIuSIZE"", type, len, min_len, max_len);
+			ovs_assert(0);
         return false;
     }
 
     /* Strings must be null terminated and must not have embedded nulls. */
     if (policy->type == NL_A_STRING) {
         if (((char *) nla)[nla->nla_len - 1]) {
-            VLOG_DBG_RL(&rl, "attr %"PRIu16" lacks null at end", type);
+			VLOG_DBG_RL(&rl, "attr %"PRIu16" lacks null at end", type);
+			ovs_assert(0);
             return false;
         }
         if (memchr(nla + 1, '\0', len - 1) != NULL) {
-            VLOG_DBG_RL(&rl, "attr %"PRIu16" has bad length", type);
+			VLOG_DBG_RL(&rl, "attr %"PRIu16" has bad length", type);
+			ovs_assert(0);
             return false;
         }
     }
@@ -680,7 +684,8 @@ nl_policy_parse(const struct ofpbuf *msg, size_t nla_offset,
     memset(attrs, 0, n_attrs * sizeof *attrs);
 
     if (msg->size < nla_offset) {
-        VLOG_DBG_RL(&rl, "missing headers in nl_policy_parse");
+		VLOG_DBG_RL(&rl, "missing headers in nl_policy_parse");
+		ovs_assert(0);
         return false;
     }
 
@@ -695,20 +700,23 @@ nl_policy_parse(const struct ofpbuf *msg, size_t nla_offset,
                 return false;
             }
             if (attrs[type]) {
-                VLOG_DBG_RL(&rl, "duplicate attr %"PRIu16, type);
+				VLOG_DBG_RL(&rl, "duplicate attr %"PRIu16, type);
+				ovs_assert(0);
             }
             attrs[type] = nla;
         }
     }
     if (left) {
-        VLOG_DBG_RL(&rl, "attributes followed by garbage");
+		VLOG_DBG_RL(&rl, "attributes followed by garbage");
+		ovs_assert(0);
         return false;
     }
 
     for (i = 0; i < n_attrs; i++) {
         const struct nl_policy *e = &policy[i];
         if (!e->optional && e->type != NL_A_NO_ATTR && !attrs[i]) {
-            VLOG_DBG_RL(&rl, "required attr %"PRIuSIZE" missing", i);
+			VLOG_DBG_RL(&rl, "required attr %"PRIuSIZE" missing", i);
+			ovs_assert(0);
             return false;
         }
     }
