@@ -387,6 +387,9 @@ time_poll(struct pollfd *pollfds, int n_pollfds, long long int timeout_when,
             time_left = timeout_when - now;
         }
 
+#ifdef _WIN32
+		if (n_pollfds > 0)
+#endif
         retval = poll(pollfds, n_pollfds, time_left);
         if (retval < 0) {
             retval = -errno;
