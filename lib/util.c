@@ -30,6 +30,10 @@
 #include "openvswitch/types.h"
 #include "vlog.h"
 
+#ifdef _DEBUG
+#include <assert.h>
+#endif
+
 VLOG_DEFINE_THIS_MODULE(util);
 
 COVERAGE_DEFINE(util_xalloc);
@@ -48,24 +52,29 @@ void
 ovs_assert_failure(const char *where, const char *function,
                    const char *condition)
 {
-    /* Prevent an infinite loop (or stack overflow) in case VLOG_ABORT happens
-     * to trigger an assertion failure of its own. */
-    static int reentry = 0;
+#if defined(_DEBUG) && defined(_WIN32)
+	assert(0);
+#else
+	/* Prevent an infinite loop (or stack overflow) in case VLOG_ABORT happens
+	* to trigger an assertion failure of its own. */
+	static int reentry = 0;
 
-    switch (reentry++) {
-    case 0:
-        VLOG_ABORT("%s: assertion %s failed in %s()",
-                   where, condition, function);
-        NOT_REACHED();
+	switch (reentry++) {
+	case 0:
+		VLOG_ABORT("%s: assertion %s failed in %s()",
+		where, condition, function);
+		NOT_REACHED();
 
-    case 1:
-        fprintf(stderr, "%s: assertion %s failed in %s()",
-                where, condition, function);
-        abort();
+	case 1:
+		fprintf(stderr, "%s: assertion %s failed in %s()",
+		where, condition, function);
+		abort();
 
-    default:
-        abort();
-    }
+	default:
+		abort();
+	}
+	
+#endif
 }
 
 void
