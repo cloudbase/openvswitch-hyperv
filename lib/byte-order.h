@@ -22,7 +22,7 @@
 #include "openvswitch/types.h"
 
 #ifdef _WIN32
-#define __CHECKER__ 1
+#define __CHECKER__ 0
 #endif
 
 #ifndef __CHECKER__
