@@ -283,6 +283,7 @@ static enum ofperr
 decode_openflow10_action(const union ofp_action *a,
                          enum ofputil_action_code *code)
 {
+
     switch (a->type) {
     case CONSTANT_HTONS(OFPAT10_VENDOR):
         return decode_nxast_action(a, code);
@@ -580,7 +581,7 @@ log_bad_action(const union ofp_action *actions, size_t n_actions, size_t ofs,
 
         ds_init(&s);
         ds_put_hex_dump(&s, actions, n_actions * sizeof *actions, 0, false);
-        VLOG_WARN("bad action at offset %#zx (%s):\n%s",
+        VLOG_WARN("bad action at offset %#"PRIxSIZE" (%s):\n%s",
                   ofs * sizeof *actions, ofperr_get_name(error), ds_cstr(&s));
         ds_destroy(&s);
     }
@@ -695,9 +696,12 @@ decode_openflow11_action(const union ofp_action *a,
 {
     uint16_t len;
 
+	
     switch (a->type) {
     case CONSTANT_HTONS(OFPAT11_EXPERIMENTER):
         return decode_nxast_action(a, code);
+
+	
 
 #define OFPAT11_ACTION(ENUM, STRUCT, EXTENSIBLE, NAME)  \
         case CONSTANT_HTONS(ENUM):                      \
