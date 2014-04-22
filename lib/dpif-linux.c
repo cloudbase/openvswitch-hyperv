@@ -1065,7 +1065,6 @@ dpif_linux_execute(struct dpif *dpif_, const struct dpif_execute *execute)
 static void
 dpif_linux_operate__(struct dpif *dpif_, struct dpif_op **ops, size_t n_ops)
 {
-	DebugBreak();
     struct dpif_linux *dpif = dpif_linux_cast(dpif_);
 
     struct op_auxdata {
