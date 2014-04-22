@@ -250,13 +250,24 @@ poll_block(void)
     if (timeout_when == LLONG_MIN) {
         COVERAGE_INC(poll_zero_timeout);
     }
-    retval = time_poll(pollfds, n_pollfds, timeout_when, &elapsed);
-    if (retval < 0) {
-        static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
-        VLOG_ERR_RL(&rl, "poll: %s", strerror(-retval));
-    } else if (!retval) {
-        log_wakeup(timeout_where, NULL, elapsed);
-    }
+
+#ifdef _WIN32
+	retval = 0;
+	if (n_pollfds > 0)
+	{
+#endif
+		retval = time_poll(pollfds, n_pollfds, timeout_when, &elapsed);
+		if (retval < 0) {
+			static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
+			VLOG_ERR_RL(&rl, "poll: %s", strerror(-retval));
+		}
+		else if (!retval) {
+			log_wakeup(timeout_where, NULL, elapsed);
+		}
+
+#ifdef _WIN32
+	}
+#endif
 
     LIST_FOR_EACH_SAFE (pw, next, node, &waiters) {
         if (pw->pollfd->revents) {
