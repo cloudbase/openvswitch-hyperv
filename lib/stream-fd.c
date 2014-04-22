@@ -120,6 +120,28 @@ fd_recv(struct stream *stream, void *buffer, size_t n)
 		FD_ZERO(&temp);
 		FD_SET(s->fd, &temp);
 
+		switch (last_error)
+		{
+		case WSAEWOULDBLOCK:
+			errno = EWOULDBLOCK;
+			break;
+
+		case WSAECONNABORTED:
+			errno = ECONNABORTED;
+			break;
+
+		case WSAECONNREFUSED:
+			errno = ECONNREFUSED;
+			break;
+
+		case WSAECONNRESET:
+			errno = ECONNRESET;
+			break;
+
+		default:
+			ovs_assert(0);
+		}
+
 		struct timeval t;
 		t.tv_usec = 5000;
 		t.tv_sec = 0;
@@ -173,9 +195,12 @@ fd_send(struct stream *stream, const void *buffer, size_t n)
 		FD_ZERO(&temp);
 		FD_SET(s->fd, &temp);
 
-#if _WIN32
 		switch (last_error)
 		{
+		case WSAEWOULDBLOCK:
+			errno = EWOULDBLOCK;
+			break;
+
 		case WSAECONNABORTED:
 			errno = ECONNABORTED;
 			break;
@@ -191,7 +216,6 @@ fd_send(struct stream *stream, const void *buffer, size_t n)
 		default:
 			ovs_assert(0);
 		}
-#endif
 
 		struct timeval t;
 		t.tv_usec = 5000;

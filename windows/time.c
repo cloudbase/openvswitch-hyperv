@@ -6,6 +6,7 @@
 
 #if __USE_REMOTE_IO_NL_DEVICE
 #undef __USE_REMOTE_IO_NL_DEVICE
+//LONGLONG g_initialCounts, g_deltaCounts;
 #endif
 
 #if __USE_REMOTE_IO_NL_DEVICE
