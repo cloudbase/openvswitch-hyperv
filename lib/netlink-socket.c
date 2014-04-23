@@ -147,15 +147,20 @@ static HANDLE _win_create_file(const char* fileName)
 	ULONG outSize;
 	ULONG payloadSize;
 	BOOL ok;
-	int result = 0;
-	ULONG toRead = 0;
+	int result;
+	ULONG toRead ;
 
-//try_again:
+retry_send:
 	RtlZeroMemory(&out, sizeof(out));
+	RtlZeroMemory(&in, sizeof(in));
 	buffer = NULL;
 	secondPart = NULL;
 	inSize = FH_MESSAGE_CREATE_IN_SIZE_BARE;
+	outSize = 0;
+	payloadSize = 0;
 	ok = TRUE;
+	result = 0;
+	toRead = 0;
 
 	in.cmd = FH_MESSAGE_COMMAND_CREATE;
 	in.isAscii = TRUE;
@@ -170,30 +175,35 @@ static HANDLE _win_create_file(const char* fileName)
 	payloadSize = in.strLen;
 
 	if (!Socket_Send(g_remoteNlSocket, &inSize, sizeof(inSize), g_targetIp, g_targetPort)) {
-		ok = FALSE;
-		goto Cleanup;
+		goto retry_send;
+		//ok = FALSE;
+		//goto Cleanup;
 	}
 
 	if (!Socket_Send(g_remoteNlSocket, buffer, FH_MESSAGE_CREATE_IN_SIZE_BARE, g_targetIp, g_targetPort)){
-		ok = FALSE;
-		goto Cleanup;
+		goto retry_send;
+		//ok = FALSE;
+		//goto Cleanup;
 	}
 
 	secondPart = (const char*)buffer + FH_MESSAGE_CREATE_IN_SIZE_BARE;
 
 	if (!Socket_Send(g_remoteNlSocket, secondPart, payloadSize, g_targetIp, g_targetPort)) {
-		ok = FALSE;
-		goto Cleanup;
+		//ok = FALSE;
+		//goto Cleanup;
+		goto retry_send;
 	}
 
 	if (!Socket_Recv(g_remoteNlSocket, &outSize, sizeof(outSize), g_targetIp, g_targetPort)) {
-		ok = FALSE;
-		goto Cleanup;
+		//ok = FALSE;
+		//goto Cleanup;
+		goto retry_send;
 	}
 
 	if (!Socket_Recv(g_remoteNlSocket, &out, outSize, g_targetIp, g_targetPort)) {
-		ok = FALSE;
-		goto Cleanup;
+		//ok = FALSE;
+		//goto Cleanup;
+		goto retry_send;
 	}
 
 	if (INVALID_HANDLE_VALUE == out.hFile)
@@ -241,15 +251,19 @@ static BOOL _win_read_file(HANDLE hFile, VOID* data, ULONG bufSize, ULONG* pByte
 	VOID* inData;
 	VOID* outBuffer;
 	BOOL ok;
-	int result = 0;
-	ULONG toRead = 0;
+	int result;
+	ULONG toRead;
 
-//try_again:
+retry_send:
+	RtlZeroMemory(&in, sizeof(in));
 	pOut = NULL;
+	outSize = 0;
 	inSize = sizeof(in);
 	inData = NULL;
 	outBuffer = NULL;
 	ok = TRUE;
+	result = 0;
+	toRead = 0;
 
 	/*
 	FH_MESSAGE;
@@ -267,15 +281,16 @@ static BOOL _win_read_file(HANDLE hFile, VOID* data, ULONG bufSize, ULONG* pByte
 		in.overlapped = *pOverlapped;
 	}
 
-retry_send:
 	if (!Socket_Send(g_remoteNlSocket, &inSize, sizeof(inSize), g_targetIp, g_targetPort)) {
-		ok = FALSE;
-		goto Cleanup;
+		goto retry_send;
+		//ok = FALSE;
+		//goto Cleanup;
 	}
 
 	if (!Socket_Send(g_remoteNlSocket, &in, inSize, g_targetIp, g_targetPort)){
-		ok = FALSE;
-		goto Cleanup;
+		goto retry_send;
+		//ok = FALSE;
+		//goto Cleanup;
 	}
 
 	if (!Socket_Recv(g_remoteNlSocket, &outSize, sizeof(outSize), g_targetIp, g_targetPort)){
@@ -371,14 +386,18 @@ static BOOL _win_write_file(HANDLE hFile, VOID* data, ULONG bufSize, OVERLAPPED*
 	ULONG inSize;
 	ULONG outSize;
 	BOOL ok;
-	int result = 0;
-	ULONG toRead = 0;
+	int result;
+	ULONG toRead;
 
-//try_again:
+retry_send:
 	RtlZeroMemory(&in, sizeof(in));
 	RtlZeroMemory(&out, sizeof(out));
 	buffer = NULL;
 	inSize = FH_MESSAGE_WRITE_IN_SIZE_BARE;
+	outSize = 0;
+	ok = TRUE;
+	result = 0;
+	toRead = 0;
 
 	/* FH_MESSAGE_WRITE_IN
 	FH_MESSAGE: UINT cmd;
@@ -404,28 +423,33 @@ static BOOL _win_write_file(HANDLE hFile, VOID* data, ULONG bufSize, OVERLAPPED*
 	inSize += bufSize;
 
 	if (!Socket_Send(g_remoteNlSocket, &inSize, sizeof(inSize), g_targetIp, g_targetPort)) {
-		ok = FALSE;
-		goto Cleanup;
+		goto retry_send;
+		//ok = FALSE;
+		//goto Cleanup;
 	}
 
 	if (!Socket_Send(g_remoteNlSocket, buffer, FH_MESSAGE_WRITE_IN_SIZE_BARE, g_targetIp, g_targetPort)){
-		ok = FALSE;
-		goto Cleanup;
+		//ok = FALSE;
+		//goto Cleanup;
+		goto retry_send;
 	}
 
 	if (!Socket_Send(g_remoteNlSocket, (const char*)buffer + FH_MESSAGE_WRITE_IN_SIZE_BARE, bufSize, g_targetIp, g_targetPort)){
-		ok = FALSE;
-		goto Cleanup;
+		//ok = FALSE;
+		//goto Cleanup;
+		goto retry_send;
 	}
 
 	if (!Socket_Recv(g_remoteNlSocket, &outSize, sizeof(outSize), g_targetIp, g_targetPort)){
-		ok = FALSE;
-		goto Cleanup;
+		//ok = FALSE;
+		//goto Cleanup;
+		goto retry_send;
 	}
 
 	if (!Socket_Recv(g_remoteNlSocket, &out, outSize, g_targetIp, g_targetPort)){
-		ok = FALSE;
-		goto Cleanup;
+		//ok = FALSE;
+		//goto Cleanup;
+		goto retry_send;
 	}
 
 	if (!out.ok)
@@ -475,36 +499,43 @@ static BOOL _win_close_handle(HANDLE hFile)
 	ULONG outSize;
 	ULONG inSize;
 	BOOL ok;
-	int result = 0;
-	ULONG toRead = 0;
+	int result;
+	ULONG toRead;
 
-//try_again:
+retry_send:
 	RtlZeroMemory(&out, sizeof(out));
+	RtlZeroMemory(&in, sizeof(in));
 	outSize = sizeof(out);
 	inSize = sizeof(in);
 	ok = TRUE;
+	result = 0;
+	toRead = 0;
 
 	in.cmd = FH_MESSAGE_COMMAND_CLOSE;
 	in.hFile = hFile;
 
 	if (!Socket_Send(g_remoteNlSocket, &inSize, sizeof(inSize), g_targetIp, g_targetPort)) {
-		ok = FALSE;
-		goto Cleanup;
+		//ok = FALSE;
+		//goto Cleanup;
+		goto retry_send;
 	}
 
 	if (!Socket_Send(g_remoteNlSocket, &in, inSize, g_targetIp, g_targetPort)){
-		ok = FALSE;
-		goto Cleanup;
+		//ok = FALSE;
+		//goto Cleanup;
+		goto retry_send;
 	}
 
 	if (!Socket_Recv(g_remoteNlSocket, &outSize, sizeof(outSize), g_targetIp, g_targetPort)){
-		ok = FALSE;
-		goto Cleanup;
+		//ok = FALSE;
+		//goto Cleanup;
+		goto retry_send;
 	}
 
 	if (!Socket_Recv(g_remoteNlSocket, &out, outSize, g_targetIp, g_targetPort)){
-		ok = FALSE;
-		goto Cleanup;
+		//ok = FALSE;
+		//goto Cleanup;
+		goto retry_send;
 	}
 
 	if (!out.ok)
