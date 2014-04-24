@@ -948,7 +948,9 @@ nl_sock_recv__(struct nl_sock *sock, struct ofpbuf *buf, bool wait)
     msg.msg_iovlen = 2;
 
 #ifdef _WIN32
-	int bla = GetLastError();
+	SetLastError(0);
+	DWORD LastError = GetLastError();
+	
 	do {
 	WSAOVERLAPPED RecvOverlapped;
 	SecureZeroMemory((PVOID)& RecvOverlapped, sizeof (WSAOVERLAPPED));
@@ -957,16 +959,26 @@ nl_sock_recv__(struct nl_sock *sock, struct ofpbuf *buf, bool wait)
 		LPOVERLAPPED
 			retval = -1;
 	}
+
+	SetLastError(0);
+
 #if __USE_REMOTE_IO_NL_DEVICE
 	_win_read_file((HANDLE)sock->fd, buf->base, buf->allocated, &retval, &RecvOverlapped);
 #else
 	ReadFile((HANDLE)sock->fd, buf->base, buf->allocated, &retval, &RecvOverlapped);
 #endif
-	bla = GetLastError();
-	errno = abs(bla);
-	if (bla != ERROR_IO_PENDING && !retval)
+	LastError = GetLastError();
+
+	if (LastError != ERROR_IO_PENDING && !retval)
+		{
 		retval = -1;
-} while (bla == ERROR_IO_PENDING);
+		_set_errno(EAGAIN);
+		}
+	else
+		{
+		_set_errno(EAGAIN);
+		}
+	} while (LastError == ERROR_IO_PENDING);
 #else
     do {
         retval = recvmsg(sock->fd, &msg, wait ? 0 : MSG_DONTWAIT);
