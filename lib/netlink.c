@@ -711,7 +711,9 @@ nl_policy_parse(const struct ofpbuf *msg, size_t nla_offset,
     }
     if (left) {
 		VLOG_DBG_RL(&rl, "attributes followed by garbage");
+#ifndef _WIN32 //Don't abort on bogus data just ignore it on windows
 		ovs_assert(0);
+#endif
         return false;
     }
 
