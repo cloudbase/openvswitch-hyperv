@@ -253,8 +253,9 @@ fatal_signal_unlink_file_now(const char *file)
 
 #ifdef _WIN32
 	DeleteFile(file);
-#endif
+#else
     fatal_signal_remove_file_to_unlink(file);
+#endif
 
     return error;
 }
