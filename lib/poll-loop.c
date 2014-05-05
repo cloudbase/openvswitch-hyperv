@@ -197,7 +197,12 @@ log_wakeup(const char *where, const struct pollfd *pollfd, int timeout)
 		free(description);
 #endif
     } else {
-        ds_put_format(&s, "%d-ms timeout", timeout);
+		if (timeout > 0) {
+			ds_put_format(&s, "%d-ms timeout", timeout);
+		}
+		else {
+			return;
+		}
     }
     if (where) {
         ds_put_format(&s, " at %s", where);

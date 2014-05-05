@@ -821,7 +821,11 @@ static void update_learning_table(struct ofproto_dpif *, const struct flow *,
                                   struct flow_wildcards *, int vlan,
                                   struct ofbundle *);
 /* Upcalls. */
+#ifdef _WIN32
+#define FLOW_MISS_MAX_BATCH 20
+#else
 #define FLOW_MISS_MAX_BATCH 50
+#endif
 static int handle_upcalls(struct dpif_backer *, unsigned int max_batch);
 
 /* Flow expiration. */

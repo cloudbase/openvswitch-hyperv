@@ -40,8 +40,13 @@
 #include "vlog.h"
 
 #define MAX_QUEUE_LENGTH 512
+#ifdef _WIN32
+#define FLOW_MISS_MAX_BATCH 20
+#define REVALIDATE_MAX_BATCH 20
+#else
 #define FLOW_MISS_MAX_BATCH 50
 #define REVALIDATE_MAX_BATCH 50
+#endif
 
 VLOG_DEFINE_THIS_MODULE(ofproto_dpif_upcall);
 
