@@ -414,6 +414,8 @@ maybe_unlink_and_free(char *path)
 {
     if (path) {
         fatal_signal_unlink_file_now(path);
+#ifndef _WIN32
         free(path);
+#endif
     }
 }
