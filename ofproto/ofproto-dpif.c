@@ -822,7 +822,7 @@ static void update_learning_table(struct ofproto_dpif *, const struct flow *,
                                   struct ofbundle *);
 /* Upcalls. */
 #ifdef _WIN32
-#define FLOW_MISS_MAX_BATCH 20
+#define FLOW_MISS_MAX_BATCH 50
 #else
 #define FLOW_MISS_MAX_BATCH 50
 #endif
