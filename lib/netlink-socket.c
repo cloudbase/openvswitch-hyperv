@@ -1520,10 +1520,14 @@ nl_dump_next(struct nl_dump *dump, struct ofpbuf *reply)
         int retval = nl_dump_recv(dump);
         if (retval) {
             ofpbuf_clear(&dump->buffer);
+#ifndef _WIN32
             if (retval != EAGAIN) {
+#endif
                 dump->status = retval;
                 return false;
+#ifndef _WIN32
             }
+#endif
         }
     }
 
