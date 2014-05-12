@@ -647,7 +647,9 @@ nl_attr_validate(const struct nlattr *nla, const struct nl_policy *policy)
     if (len < min_len || len > max_len) {
         VLOG_DBG_RL(&rl, "attr %"PRIu16" length %"PRIuSIZE" not in "
 			"allowed range %"PRIuSIZE"...%"PRIuSIZE"", type, len, min_len, max_len);
+#ifndef _WIN32
 			ovs_assert(0);
+#endif
         return false;
     }
 
@@ -655,12 +657,16 @@ nl_attr_validate(const struct nlattr *nla, const struct nl_policy *policy)
     if (policy->type == NL_A_STRING) {
         if (((char *) nla)[nla->nla_len - 1]) {
 			VLOG_DBG_RL(&rl, "attr %"PRIu16" lacks null at end", type);
+#ifndef _WIN32
 			ovs_assert(0);
+#endif
             return false;
         }
         if (memchr(nla + 1, '\0', len - 1) != NULL) {
 			VLOG_DBG_RL(&rl, "attr %"PRIu16" has bad length", type);
+#ifndef _WIN32
 			ovs_assert(0);
+#endif
             return false;
         }
     }
