@@ -1,5 +1,6 @@
 IF(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
 include_directories("$ENV{INCLUDE}")
+include_directories("${CMAKE_SOURCE_DIR}")
 include_directories("${OVS_Port_SOURCE_DIR}/windows")
 include_directories("${OVS_Port_SOURCE_DIR}/windows/thirdparty/win-pthread/include")
 link_directories("${OVS_Port_SOURCE_DIR}/windows")

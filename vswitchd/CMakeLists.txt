@@ -1,4 +1,5 @@
 include_directories("${OVS_Port_SOURCE_DIR}")
+include_directories("${CMAKE_SOURCE_DIR}")
 include_directories("${OVS_Port_SOURCE_DIR}/include")
 include_directories("${OVS_Port_SOURCE_DIR}/lib")
 include_directories("${OVS_Port_SOURCE_DIR}/ofproto")

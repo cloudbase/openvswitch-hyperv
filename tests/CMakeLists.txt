@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 2.6)
 enable_testing ()
 
 include_directories("${OVS_Port_SOURCE_DIR}")
+include_directories("${CMAKE_SOURCE_DIR}")
 include_directories("${OVS_Port_SOURCE_DIR}/include")
 include_directories("${OVS_Port_SOURCE_DIR}/lib")
 include_directories("${OVS_Port_SOURCE_DIR}/ofproto")
