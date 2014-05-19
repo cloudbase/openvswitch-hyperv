@@ -74,10 +74,19 @@ lockfile_name(const char *filename_)
      * is only a single lockfile for both the source and the target of the
      * symlink, not one for each. */
     filename = follow_symlinks(filename_);
+#ifndef _WIN32
     slash = strrchr(filename, '/');
+#else
+	slash = strrchr(filename, '\\');
+#endif
     lockname = (slash
+#ifndef _WIN32
                 ? xasprintf("%.*s/.%s.~lock~",
                             (int) (slash - filename), filename, slash + 1)
+#else
+		? xasprintf("%.*s\\.%s.~lock~",
+                            (int) (slash - filename), filename, slash + 1)
+#endif
                 : xasprintf(".%s.~lock~", filename));
     free(filename);
 
